@@ -1,5 +1,4 @@
 import numpy as np
-
 ##### CONSTANT FIELD NAMES ##########
 RADIUS = 'radius'
 MASS = 'mass'
@@ -195,36 +194,71 @@ class System:
     def getUpidIdx(self):
         return
 
-    
-
+import graphics as g
 class Event:
     """
-    stores info about some event that happens to halo
+    stores info about some event that happens to halo. Often particular kinds
+    of events require shared plot properties so they appear the
+    same in each instance. Each subclass stores the default style for that particular
+    kind of event, implemented via the function _setDefaultStyle
     """
-    def __init__(self):
-        pass
+    def __init__(self, snaps, name=None):
+        # Use provided name, or fall back to class name
+        if name is None:
+            name = self.__class__.__name__
+        self.name = name
+        self.snaps = snaps
+        self._setDefaultStyle()
 
+    def getName(self):
+        return self.name
+    
+    def getSnaps(self):
+        return self.snaps
+    
+    def _setDefaultStyle(self):
+        self.def_style = {}
+        return
+    
 class Peri(Event):
-
-    def __init__(self):
-        super().__init__()
+    
+    def _setDefaultStyle(self):
+        self.def_style = {
+            g.COLOR : (255, 255, 0), # yellow
+            g.LABEL : 'pericenter',
+            g.SHAPE : 'sphere'
+        }
 
 class Apo(Event):
 
-    def __init__(self):
-        super().__init__()
+    def _setDefaultStyle(self):
+        self.def_style = {
+            g.COLOR : (50, 205, 50), # lime green
+            g.LABEL : 'pericenter',
+            g.SHAPE : 'sphere'
+        }
 
-class Death(Event):
-
-    def __init__(self):
-        super().__init__()
+# class Death(Event):
+#     def _setDefaultStyle(self):
+#         self.def_style = {
+#             g.COLOR : (255, 255, 0), # yellow
+#             g.LABEL : 'pericenter',
+#             g.SHAPE : 'sphere'
+#         }
 
 class Inf(Event):
-
-    def __init__(self):
-        super().__init__()
+    def _setDefaultStyle(self):
+        self.def_style = {
+            g.COLOR : (255, 165, 0), # orange
+            g.LABEL : 'infall',
+            g.SHAPE : 'sphere'
+        }
 
 class SwitchHost(Event):
 
-    def __init__(self):
-        super().__init__()
+    def _setDefaultStyle(self):
+        self.def_style = {
+            g.COLOR : (54, 117, 136), # teal blue
+            g.LABEL : 'host switch',
+            g.SHAPE : 'cone'
+        }

@@ -3,6 +3,15 @@ from containers import System
 from typing import List
 import numpy as np
 
+BACKGROUND_COLOR = 'background'
+CAM_POS = 'camera_position'
+CAM_FOC = 'camera_focus_point'
+CAM_UP = 'camera_view_up'
+CAM_ZOOM = 'camera_parallel_scale'
+CAM_PROJ = 'camera_parallel_projection'
+
+SCENE_KEY = '_scene'
+
 class Scene:
 
     def __init__(self, system : System) -> None:
@@ -12,6 +21,8 @@ class Scene:
         self.graphics : List[Graphic] = []
         self.start = 0
         self.stop = len(self.sys.halos[0].pos)
+        self.render_props = {}
+        self.setBackgroundColor((0, 0, 0))
         return
     
     def getGraphics(self) -> List[Graphic]:
@@ -43,6 +54,80 @@ class Scene:
         self.stop = stop
         return
     
+    # --- Scene Property Setters ---
+    def getSceneProps(self):
+        return self.render_props
+
+    def setProp(self, name, value):
+        self.render_props[name] = value
+
+    def setBackgroundColor(self, color):
+        """
+        Set the scene background color.
+        Expects a tuple or list of 3 floats (RGB, 0–1).
+        """
+        if (isinstance(color, (tuple, list)) and len(color) == 3 
+            and all(isinstance(c, (int, float)) and 0 <= c <= 1 for c in color)):
+            self.render_props[BACKGROUND_COLOR] = tuple(float(c) for c in color)
+        else:
+            raise ValueError("Background color must be a tuple/list of 3 floats in [0,1].")
+        return
+
+    def setCameraPosition(self, pos):
+        """
+        Set camera position (x, y, z).
+        """
+        if (isinstance(pos, (tuple, list)) and len(pos) == 3 
+            and all(isinstance(x, (int, float)) for x in pos)):
+            self.render_props[CAM_POS] = tuple(float(x) for x in pos)
+        else:
+            raise ValueError("Camera position must be a tuple/list of 3 numbers.")
+        return
+
+    def setCameraFocusPoint(self, foc):
+        """
+        Set camera focal point (where the camera looks).
+        """
+        if (isinstance(foc, (tuple, list)) and len(foc) == 3 
+            and all(isinstance(x, (int, float)) for x in foc)):
+            self.render_props[CAM_FOC] = tuple(float(x) for x in foc)
+        else:
+            raise ValueError("Camera focus point must be a tuple/list of 3 numbers.")
+        return
+
+    def setCameraViewUp(self, up):
+        """
+        Set camera view up direction (usually [0,0,1] or [0,1,0]).
+        """
+        if (isinstance(up, (tuple, list)) and len(up) == 3 
+            and all(isinstance(x, (int, float)) for x in up)):
+            self.render_props[CAM_UP] = tuple(float(x) for x in up)
+        else:
+            raise ValueError("Camera view up must be a tuple/list of 3 numbers.")
+        return
+
+    def setCameraParallelScale(self, scale):
+        """
+        Set camera zoom (parallel scale, must be positive float).
+        """
+        if isinstance(scale, (int, float)) and scale > 0:
+            self.render_props[CAM_ZOOM] = float(scale)
+        else:
+            raise ValueError("Camera parallel scale must be a positive number.")
+        return
+
+    def setCameraParallelProjection(self, flag):
+        """
+        Set camera projection mode: True (parallel) or False (perspective).
+        """
+        if isinstance(flag, bool):
+            self.render_props[CAM_PROJ] = flag
+        else:
+            raise ValueError("Camera parallel projection must be a boolean.")
+        return
+    
+
+
     ### GENERAL GRAPHIC CREATION METHODS USED IN ALL SCENES ###
     
     def showTjy(self, halo_id) -> Line:
@@ -55,6 +140,14 @@ class Scene:
         sphere = Sphere(halo)
         return sphere
     
+    def autoCam(self):
+        """
+        finds the axis that has the largest position variation, sets that axis to go from left
+        to right, with the axis of the second most position variation going from top to bottom.
+        Does this via setting the focal point, up view, and position of the camera.
+        Automatically sets the zoom to just fit all objects within the view.
+        """
+        return
 
 class HaloView(Scene):
     """

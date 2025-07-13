@@ -2,7 +2,7 @@ import json
 import os
 from collections import Counter
 from xml.etree.ElementTree import Element, SubElement, ElementTree
-
+from scenes import Scene, SCENE_KEY
 def write_pvd(pvd_path, vtp_filelist, timestep_list):
     """
     Write a Paraview PVD file listing all VTPs at given timesteps.
@@ -14,7 +14,7 @@ def write_pvd(pvd_path, vtp_filelist, timestep_list):
     tree = ElementTree(root)
     tree.write(pvd_path, encoding="utf-8", xml_declaration=True)
 
-def export(scene, out_dir):
+def export(scene : Scene, out_dir):
     # 1. Create output directory if it doesn't exist
     os.makedirs(out_dir, exist_ok=True)
 
@@ -34,6 +34,10 @@ def export(scene, out_dir):
         fnames, tsteps = gph.writeVTP(out_dir, scene.start, scene.stop)
         vtp_outputs.extend(zip(fnames, tsteps))
         style[gph.getName()] = gph.getStyle()
+    
+    # also add scene settings to style json
+    style[SCENE_KEY] = scene.getSceneProps()
+    
     # 4. Save style dictionary as JSON
     style_path = os.path.join(out_dir, 'style.json')
     with open(style_path, 'w') as f:

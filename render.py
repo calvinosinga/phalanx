@@ -44,3 +44,5 @@ def render(out_dir):
 
 if __name__ == '__main__':
     render(sys.argv[1])
+
+    # TODO if next argument is delete, delete output directory
