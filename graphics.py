@@ -3,21 +3,7 @@ from containers import Halo, Event
 import os
 import numpy as np
 from typing import Tuple, List, Union
-from scenes import SCENE_KEY
-COLOR = 'color'
-OPACITY = 'opacity'
-LSTYLE = 'linestyle'
-LWIDTH = 'linewidth'
-SIZE = 'size'
-SHAPE = 'shape'
-LABEL = 'label'
-TIPSIZE = 'tipsize'
-SHOW_POINTS = 'show_points'
-
-ALLOWED_LINESTYLES = {'solid', 'dashed', 'dotted'}
-ALLOWED_MARKER_SHAPES = {'sphere', 'cube', 'cone', 'arrow', 'cylinder', 'point'}
-
-INT_GRAPHIC_NAMES = {SCENE_KEY}
+import global_names as gn
 def _check_color(value):
     """Check if value is a valid RGB or RGBA color."""
     if isinstance(value, (tuple, list, np.ndarray)) and (len(value) == 3 or len(value) == 4):
@@ -37,7 +23,7 @@ class Graphic:
         self.styles = {}
 
     def setName(self, name: str):
-        if name in INT_GRAPHIC_NAMES:
+        if name in gn.INT_GRAPHIC_NAMES:
             raise ValueError(f"{name} cannot be used as graphic name, used internally in phalanx")
         self.name = str(name)
 
@@ -51,12 +37,12 @@ class Graphic:
         """Set the label for the graphic."""
         if not isinstance(label, str):
             raise TypeError("Label must be a string.")
-        self.styles[LABEL] = label
+        self.styles[gn.LABEL] = label
 
     def setColor(self, color: Union[tuple, list, np.ndarray]):
         """Set the color for the graphic."""
         _check_color(color)
-        self.styles[COLOR] = color
+        self.styles[gn.COLOR] = color
 
     def writeVTP(self, out_dir, start, stop) -> Tuple[List, List]:
         
@@ -74,7 +60,7 @@ class Sphere(Graphic):
         """Set sphere opacity between 0 and 1."""
         if not isinstance(opacity, (float, int)) or not (0 <= opacity <= 1):
             raise ValueError(f"Opacity must be a float between 0 and 1, got {opacity}")
-        self.styles[OPACITY] = float(opacity)
+        self.styles[gn.OPACITY] = float(opacity)
 
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
         radius = self.halo.radius
@@ -108,14 +94,17 @@ class Marker(Graphic):
 
     def setSize(self, size: float):
         _check_positive_float(size, "Size")
-        self.styles[SIZE] = float(size)
+        self.styles[gn.SIZE] = float(size)
 
     def setShape(self, shape: str):
         """Set marker shape. Allowed: sphere, cube, cone, arrow, cylinder, point."""
-        if shape not in ALLOWED_MARKER_SHAPES:
-            raise ValueError(f"Shape '{shape}' not recognized. Allowed: {ALLOWED_MARKER_SHAPES}")
-        self.styles[SHAPE] = shape
+        if shape not in gn.ALLOWED_MARKER_SHAPES:
+            raise ValueError(f"Shape '{shape}' not recognized. Allowed: {gn.ALLOWED_MARKER_SHAPES}")
+        self.styles[gn.SHAPE] = shape
 
+    def writeVTP(self, out_dir, start, stop):
+        
+        return
 
 class Line(Graphic):
 
@@ -129,18 +118,18 @@ class Line(Graphic):
         """Allowed: solid, dashed, dotted."""
         if not isinstance(linestyle, str):
             raise TypeError("Linestyle must be a string.")
-        if linestyle not in ALLOWED_LINESTYLES:
-            raise ValueError(f"Linestyle '{linestyle}' not recognized. Allowed: {ALLOWED_LINESTYLES}")
-        self.styles[LSTYLE] = linestyle
+        if linestyle not in gn.ALLOWED_LINESTYLES:
+            raise ValueError(f"Linestyle '{linestyle}' not recognized. Allowed: {gn.ALLOWED_LINESTYLES}")
+        self.styles[gn.LSTYLE] = linestyle
 
     def setLinewidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
-        self.styles[LWIDTH] = float(linewidth)
+        self.styles[gn.LWIDTH] = float(linewidth)
 
     def setShowPoints(self, show: bool):
         if not isinstance(show, bool):
             raise TypeError("show_points must be a boolean.")
-        self.styles[SHOW_POINTS] = show
+        self.styles[gn.SHOW_POINTS] = show
     
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
         """
@@ -179,17 +168,17 @@ class Arrow(Graphic):
     def setLinestyle(self, linestyle: str):
         if not isinstance(linestyle, str):
             raise TypeError("Linestyle must be a string.")
-        if linestyle not in ALLOWED_LINESTYLES:
-            raise ValueError(f"Linestyle '{linestyle}' not recognized. Allowed: {ALLOWED_LINESTYLES}")
-        self.styles[LSTYLE] = linestyle
+        if linestyle not in gn.ALLOWED_LINESTYLES:
+            raise ValueError(f"Linestyle '{linestyle}' not recognized. Allowed: {gn.ALLOWED_LINESTYLES}")
+        self.styles[gn.LSTYLE] = linestyle
 
     def setLinewidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
-        self.styles[LWIDTH] = float(linewidth)
+        self.styles[gn.LWIDTH] = float(linewidth)
 
     def setTipsize(self, tipsize: float):
         _check_positive_float(tipsize, "Tipsize")
-        self.styles[TIPSIZE] = float(tipsize)
+        self.styles[gn.TIPSIZE] = float(tipsize)
 
 
 class Plot2D:
@@ -201,3 +190,9 @@ class Plot2D:
     # TODO implement later
         
 
+class LineSegment(Graphic):
+
+    def __init__(self):
+        super().__init__()
+    
+    #TODO implement later, basically contains a series of lines that change properties

@@ -1,12 +1,89 @@
 import numpy as np
-##### CONSTANT FIELD NAMES ##########
-RADIUS = 'radius'
-MASS = 'mass'
-VR = 'rad_vel'
-VT = 'tan_vel'
-VEL = 'velocity'  # optionally update to ['vx', 'vy', 'vz']
-PID = 'pid'
-UPID = 'upid'
+import global_names as gn
+from typing import List
+
+class Event:
+    """
+    stores info about some event that happens to halo. Often particular kinds
+    of events require shared plot properties so they appear the
+    same in each instance. Each subclass stores the default style for that particular
+    kind of event, implemented via the function _setDefaultStyle
+    """
+    def __init__(self, snap, name=None):
+        # Use provided name, or fall back to class name
+        self.snap = snap
+        if name is None:
+            name = f"{self.__class__.__name__}_{self.snap}"
+        self.name = name
+        self._setDefaultStyle()
+
+    def getName(self):
+        return self.name
+    
+    def getSnap(self):
+        return self.snap
+    
+    def _setDefaultStyle(self):
+        self.def_style = {}
+        return
+    
+class Peri(Event):
+
+    
+    def _setDefaultStyle(self):
+        self.def_style = {
+            gn.COLOR : (255, 255, 0), # yellow
+            gn.LABEL : 'pericenter',
+            gn.SHAPE : 'sphere'
+        }
+
+    def setHost(self, host_id):
+        self.host_id = host_id
+        self.name = f"{self.name}_{host_id}"
+        return
+    
+class Apo(Event):
+
+    def _setDefaultStyle(self):
+        self.def_style = {
+            gn.COLOR : (50, 205, 50), # lime green
+            gn.LABEL : 'pericenter',
+            gn.SHAPE : 'sphere'
+        }
+
+    def setHost(self, host_id):
+        self.host_id = host_id
+        self.name = f"{self.name}_{host_id}"
+        return
+# class Death(Event):
+#     def _setDefaultStyle(self):
+#         self.def_style = {
+#             g.COLOR : (255, 255, 0), # yellow
+#             g.LABEL : 'pericenter',
+#             g.SHAPE : 'sphere'
+#         }
+
+class Ifl(Event):
+    def _setDefaultStyle(self):
+        self.def_style = {
+            gn.COLOR : (255, 165, 0), # orange
+            gn.LABEL : 'infall',
+            gn.SHAPE : 'sphere'
+        }
+
+    def setHost(self, host_id):
+        self.host_id = host_id
+        self.name = f"{self.name}_{host_id}"
+        return
+
+class SwitchHost(Event):
+
+    def _setDefaultStyle(self):
+        self.def_style = {
+            gn.COLOR : (54, 117, 136), # teal blue
+            gn.LABEL : 'host switch',
+            gn.SHAPE : 'cone'
+        }
 
 class Halo:
     """
@@ -54,35 +131,37 @@ class Halo:
     def addEvent(self, event):
         self.events.append(event)
     
+    def getEvents(self) -> List[Event]:
+        return self.events
     # --- Property Accessors for Common Fields --- #
     
     @property
     def radius(self):
-        return self.getField(RADIUS)
+        return self.getField(gn.RADIUS)
 
     @property
     def mass(self):
-        return self.getField(MASS)
+        return self.getField(gn.MASS)
 
     @property
     def radVel(self):
-        return self.getField(VR)
+        return self.getField(gn.VR)
 
     @property
     def tanVel(self):
-        return self.getField(VT)
+        return self.getField(gn.VT)
 
     @property
     def velocity(self):
-        return self.getField(VEL)
+        return self.getField(gn.VEL)
 
     @property
     def pid(self):
-        return self.getField(PID)
+        return self.getField(gn.PID)
 
     @property
     def upid(self):
-        return self.getField(UPID)
+        return self.getField(gn.UPID)
 
     
     
@@ -193,72 +272,3 @@ class System:
 
     def getUpidIdx(self):
         return
-
-import graphics as g
-class Event:
-    """
-    stores info about some event that happens to halo. Often particular kinds
-    of events require shared plot properties so they appear the
-    same in each instance. Each subclass stores the default style for that particular
-    kind of event, implemented via the function _setDefaultStyle
-    """
-    def __init__(self, snaps, name=None):
-        # Use provided name, or fall back to class name
-        if name is None:
-            name = self.__class__.__name__
-        self.name = name
-        self.snaps = snaps
-        self._setDefaultStyle()
-
-    def getName(self):
-        return self.name
-    
-    def getSnaps(self):
-        return self.snaps
-    
-    def _setDefaultStyle(self):
-        self.def_style = {}
-        return
-    
-class Peri(Event):
-    
-    def _setDefaultStyle(self):
-        self.def_style = {
-            g.COLOR : (255, 255, 0), # yellow
-            g.LABEL : 'pericenter',
-            g.SHAPE : 'sphere'
-        }
-
-class Apo(Event):
-
-    def _setDefaultStyle(self):
-        self.def_style = {
-            g.COLOR : (50, 205, 50), # lime green
-            g.LABEL : 'pericenter',
-            g.SHAPE : 'sphere'
-        }
-
-# class Death(Event):
-#     def _setDefaultStyle(self):
-#         self.def_style = {
-#             g.COLOR : (255, 255, 0), # yellow
-#             g.LABEL : 'pericenter',
-#             g.SHAPE : 'sphere'
-#         }
-
-class Inf(Event):
-    def _setDefaultStyle(self):
-        self.def_style = {
-            g.COLOR : (255, 165, 0), # orange
-            g.LABEL : 'infall',
-            g.SHAPE : 'sphere'
-        }
-
-class SwitchHost(Event):
-
-    def _setDefaultStyle(self):
-        self.def_style = {
-            g.COLOR : (54, 117, 136), # teal blue
-            g.LABEL : 'host switch',
-            g.SHAPE : 'cone'
-        }
