@@ -32,7 +32,7 @@ class Peri(Event):
     
     def _setDefaultStyle(self):
         self.def_style = {
-            gn.COLOR : (255, 255, 0), # yellow
+            gn.COLOR : (1, 1, 0), # yellow
             gn.LABEL : 'pericenter',
             gn.SHAPE : 'sphere'
         }
@@ -46,7 +46,7 @@ class Apo(Event):
 
     def _setDefaultStyle(self):
         self.def_style = {
-            gn.COLOR : (50, 205, 50), # lime green
+            gn.COLOR : (50/255, 205/255, 50/255), # lime green
             gn.LABEL : 'pericenter',
             gn.SHAPE : 'sphere'
         }
@@ -66,7 +66,7 @@ class Apo(Event):
 class Ifl(Event):
     def _setDefaultStyle(self):
         self.def_style = {
-            gn.COLOR : (255, 165, 0), # orange
+            gn.COLOR : (1, 165/255, 0), # orange
             gn.LABEL : 'infall',
             gn.SHAPE : 'sphere'
         }
@@ -76,14 +76,15 @@ class Ifl(Event):
         self.name = f"{self.name}_{host_id}"
         return
 
-class SwitchHost(Event):
+class SwitchStatus(Event):
 
     def _setDefaultStyle(self):
         self.def_style = {
-            gn.COLOR : (54, 117, 136), # teal blue
+            gn.COLOR : (54/255, 117/255, 136/255), # teal blue
             gn.LABEL : 'host switch',
             gn.SHAPE : 'cone'
         }
+    
 
 class Halo:
     """
@@ -163,7 +164,9 @@ class Halo:
     def upid(self):
         return self.getField(gn.UPID)
 
-    
+    @property
+    def status(self):
+        return self.getField(gn.STATUS)
     
 class System:
     """
@@ -183,6 +186,9 @@ class System:
         idx = np.where(self.hids == hid)[0][0]
         return self.halos[idx]
     
+    def _getDefaultPointSize(self):
+        return self.boxsize * 0.001
+
     def getID(self, idx) -> int:
         return self.halos[idx].hid
     

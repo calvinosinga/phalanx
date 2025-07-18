@@ -1,9 +1,9 @@
-from graphics import Graphic, Sphere, Line, Marker
+from graphics import Graphic, Sphere, Line, Marker, Arrow
 from containers import System
 from typing import List
 import numpy as np
 import global_names as gn
-
+import copy
 
 class Scene:
 
@@ -14,6 +14,7 @@ class Scene:
         self.graphics : List[Graphic] = []
         self.start = 0
         self.stop = len(self.sys.halos[0].pos)
+
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
         return
@@ -42,6 +43,8 @@ class Scene:
                 m.setColor(ds[gn.COLOR])
                 m.setLabel(ds[gn.LABEL])
                 m.setShape(ds[gn.SHAPE])
+                m.setSize(self.sys._getDefaultPointSize())
+                m.setSnaps(ev.getSnap(), self.stop)
                 self.graphics.append(m)
 
         return
@@ -62,7 +65,11 @@ class Scene:
     
     # --- Scene Property Setters ---
     def getSceneProps(self):
-        return self.render_props
+        rprops = copy.deepcopy(self.render_props)
+        rprops['start'] = str(self.start)
+        rprops['stop'] = str(self.stop)
+        rprops['nframes'] = str(self.stop - self.start + 1)
+        return rprops
 
     def setProp(self, name, value):
         self.render_props[name] = value
@@ -131,21 +138,7 @@ class Scene:
         else:
             raise ValueError("Camera parallel projection must be a boolean.")
         return
-    
 
-
-    ### GENERAL GRAPHIC CREATION METHODS USED IN ALL SCENES ###
-    
-    def showTjy(self, halo_id) -> Line:
-        halo = self.sys.getHalo(halo_id)
-        traj = Line(halo)
-        return traj
-    
-    def showBoundary(self, halo_id) -> Sphere:
-        halo = self.sys.getHalo(halo_id)
-        sphere = Sphere(halo)
-        return sphere
-    
     def autoCam(self):
         """
         finds the axis that has the largest position variation, sets that axis to go from left
@@ -154,7 +147,36 @@ class Scene:
         Automatically sets the zoom to just fit all objects within the view.
         """
         return
+    
+    ### GENERAL GRAPHIC CREATION METHODS USED IN ALL SCENES ###
+    
+    def makeTjy(self, halo_id) -> Line:
+        halo = self.sys.getHalo(halo_id)
+        traj = Line(halo)
+        return traj
+    
+    def makeSphere(self, halo_id) -> Sphere:
+        halo = self.sys.getHalo(halo_id)
+        sphere = Sphere(halo)
+        return sphere
+    
+    def makeArrow(self, halo_from_id, halo_to_id, start = -1, stop = -1) -> Arrow:
+        halo_from = self.sys.getHalo(halo_from_id)
+        halo_to = self.sys.getHalo(halo_to_id)
+        arrow = Arrow(halo_from, halo_to)
+        if start >= 0 and stop >= 0:
+            arrow.setSnaps(start, stop)
 
+        return arrow
+
+    def makeSegment(self, halo_id, start, stop):
+        halo = self.sys.getHalo(halo_id)
+        seg = Line(halo)
+        seg.setSnaps(start, stop)
+        seg.setName(f"{seg.getName()}_{start}_{stop}")
+        return seg
+    
+    
 class HaloView(Scene):
     """
     For scenes that involve following a single halo. Special methods are provided to give
@@ -165,14 +187,15 @@ class HaloView(Scene):
         self.pov = system.getHalo(pov_id)
         super().__init__(system)
         self.sys.setHaloOrigin(self.pov.hid)
-        nsnaps = self.stop
+        nsnaps = len(self.sys.halos[0].pos)
         snaps = np.arange(nsnaps)
         alv = self.pov.getAlive()
         self.setSnap(snaps[alv][0], snaps[alv][-1])
         return
 
     def POVBoundary(self):
-        sphere = self.showBoundary(self.pov.hid)
+        sphere = self.makeSphere(self.pov.hid)
+        sphere.setOpacity(0.15)
         self.addGraphic(sphere)
         return
     
@@ -181,16 +204,122 @@ class HaloView(Scene):
         for id_i in self.sys.hids:
             if id_i == self.pov.hid:
                 continue
-            tjy = self.showTjy(id_i)
+            tjy = self.makeTjy(id_i)
             self.addGraphic(tjy)
         return
         
-    def onlyInteractions(self):
+    def startAtFirstInfall(self):
         """
-        ignore all (if any) snapshots at the start where the halo is isolated, limit to 3
-        snapshots before another halo enters its R200m 
+        delay the start of the animation until another halo appears near the pov.
         """
         return
+    
+    def showTjyByStatus(self, host_color=None, sub_color=None,
+                        alt_sub_color=None, do_ghost=False):
+        """
+        Draws trajectories of all halos except pov, coloring by host/sub/alt_sub status,
+        and optionally applies ghost style overlay (dashed) if status >= 30.
+        Single-snapshot segments get a Marker instead of a line (except ghost-only).
+        """
+        if host_color is None:
+            host_color = (0.2, 0.4, 1.0)      # medium blue
+        if sub_color is None:
+            sub_color = (1.0, 0.2, 0.2)       # red
+        if alt_sub_color is None:
+            alt_sub_color = (1.0, 0.55, 0.41) # salmon
+
+        ghost_style = {gn.LSTYLE: 'dashed'}
+
+        pov_id = self.pov.hid
+
+        for hid in self.sys.hids:
+            if hid == pov_id:
+                continue
+
+            halo = self.sys.getHalo(hid)
+            alive_mask = halo.getAlive()
+            snaps = np.arange(self.start, self.stop)
+            alive_range = alive_mask[self.start:self.stop]
+            relevant_snaps = snaps[alive_range]
+            if relevant_snaps.size == 0:
+                continue
+
+            pid = halo.pid[self.start:self.stop][alive_range]
+            status = halo.status[self.start:self.stop][alive_range]
+
+            # Determine the main category and ghost overlay for each frame
+            def get_category(pid_val):
+                if pid_val == -1:
+                    return 'host'
+                elif pid_val == pov_id:
+                    return 'sub'
+                elif pid_val > 0:
+                    return 'alt_sub'
+                else:
+                    return 'unknown'
+
+            N = len(relevant_snaps)
+            if N == 0:
+                continue
+
+            categories = [get_category(pid[i]) for i in range(N)]
+            ghosts = [do_ghost and status[i] >= 30 for i in range(N)]
+
+            # Segment the trajectory by contiguous blocks of the same category and ghost flag
+            seg_starts = [0]
+            seg_cats = [(categories[0], ghosts[0])]
+            for i in range(1, N):
+                if (categories[i], ghosts[i]) != (categories[i-1], ghosts[i-1]):
+                    seg_starts.append(i)
+                    seg_cats.append((categories[i], ghosts[i]))
+            seg_starts.append(N)  # end
+
+            for i in range(len(seg_starts)-1):
+                start_idx = seg_starts[i]
+                stop_idx = seg_starts[i+1]
+                seg_len = stop_idx - start_idx
+                seg_snap = relevant_snaps[start_idx]
+                seg_cat, seg_ghost = seg_cats[i]
+
+                # Pick color
+                if seg_cat == 'host':
+                    color = host_color
+                elif seg_cat == 'sub':
+                    color = sub_color
+                elif seg_cat == 'alt_sub':
+                    color = alt_sub_color
+                else:
+                    color = (1,1,1)
+
+                # Style dict
+                style = {}
+                style[gn.COLOR] = color
+                if seg_ghost:
+                    style.update(ghost_style)
+
+                if seg_len == 1:
+                    # For ghost-only, skip marker if only occurs for one frame
+                    if seg_ghost:
+                        continue
+                    # Add a Marker instead of a Line
+                    m = Marker(halo, snap=seg_snap)
+                    m.setColor(color)
+                    m.setSize(self.sys._getDefaultPointSize())
+                    m.setLabel(seg_cat)
+                    m.setShape('sphere')
+                    m.setName(f"marker_{hid}_{seg_cat}_{seg_snap}")
+                    self.addGraphic(m)
+                else:
+                    seg_start_snap = relevant_snaps[start_idx]
+                    seg_stop_snap = relevant_snaps[stop_idx-1]+1
+                    segment = self.makeSegment(hid, seg_start_snap, seg_stop_snap)
+                    segment.setColor(color)
+                    if seg_ghost:
+                        segment.setStyle(ghost_style)
+                    self.addGraphic(segment)
+        return
+
+        
     
 class TjyComp(Scene):
 
