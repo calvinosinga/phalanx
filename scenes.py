@@ -1,5 +1,5 @@
 from graphics import Graphic, Sphere, Line, Marker, Arrow
-from containers import System
+from containers import System, Event
 from typing import List
 import numpy as np
 import global_names as gn
@@ -17,6 +17,7 @@ class Scene:
 
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
+        self.setCameraParallelProjection(True) # almost always don't want perspective projection
         return
     
     def getGraphics(self) -> List[Graphic]:
@@ -43,7 +44,10 @@ class Scene:
                 m.setColor(ds[gn.COLOR])
                 m.setLabel(ds[gn.LABEL])
                 m.setShape(ds[gn.SHAPE])
-                m.setSize(self.sys._getDefaultPointSize())
+                if gn.SIZE not in ds:
+                    m.setSize(self.sys._getDefaultPointSize())
+                else:
+                    m.setSize(ds[gn.SIZE])
                 m.setSnaps(ev.getSnap(), self.stop)
                 self.graphics.append(m)
 
@@ -139,14 +143,55 @@ class Scene:
             raise ValueError("Camera parallel projection must be a boolean.")
         return
 
-    def autoCam(self):
+    def setViewSize(self, size):
+        if (isinstance(size, (tuple, list)) and len(size) == 2
+                and all(isinstance(x, (int, float)) for x in size)):
+            self.render_props[gn.VIEW_SIZE] = size
+        else:
+            raise ValueError("View size must be tuple/list of 2 numbers.")
+
+
+
+    def autoCam(self, padding_frac: float = 0.05) -> None:
         """
-        finds the axis that has the largest position variation, sets that axis to go from left
-        to right, with the axis of the second most position variation going from top to bottom.
-        Does this via setting the focal point, up view, and position of the camera.
-        Automatically sets the zoom to just fit all objects within the view.
+        Automatically set a static parallel‐projection camera so that all
+        halos in the system just fit in view with a bit of padding.
+
+        Args:
+        padding_frac (float): fraction of the max span to pad on each side.
         """
-        return
+        # get bounding box of all halos
+        mins, maxs = self.sys.getViewBox()
+        center = (mins + maxs) / 2.0
+        spans = maxs - mins            # [dx, dy, dz]
+        # rank axes by span: [smallest, middle, largest]
+        small_ax, mid_ax, large_ax = np.argsort(spans)
+
+        # view direction ≡ +unit on the smallest‐span axis
+        view_normal = np.zeros(3)
+        view_normal[small_ax] = 1.0
+        # up vector ≡ +unit on the middle‐span axis
+        view_up = np.zeros(3)
+        view_up[mid_ax] = 1.0
+
+        # padding in world‐units
+        pad = padding_frac * spans.max()
+        width  = spans[large_ax] + 2 * pad
+        height = spans[mid_ax]   + 2 * pad
+
+        # parallel scale is half the vertical extent
+        parallel_scale = height / 2.0
+        # camera position: just outside the box along view_normal
+        distance = spans[small_ax] / 2.0 + pad
+        cam_pos = center + view_normal * distance
+
+        # apply to render_props
+        self.setCameraFocusPoint(tuple(center.tolist()))
+        self.setCameraPosition(tuple(cam_pos.tolist()))
+        self.setCameraViewUp(tuple(view_up.tolist()))
+        self.setCameraParallelScale(parallel_scale)
+        self.setViewSize((width, height))
+
     
     ### GENERAL GRAPHIC CREATION METHODS USED IN ALL SCENES ###
     
@@ -199,6 +244,23 @@ class HaloView(Scene):
         self.addGraphic(sphere)
         return
     
+    def showOrigin(self, org_size : float = 0.2):
+        """_summary_
+
+        Args:
+            org_size (float, optional): size of origin marker, expressed as fraction of
+             default calculated by the system. Defaults to 0.2.
+        """
+        org = Event(self.start, "origin")
+        org.def_style = {
+            gn.COLOR: (1, 1, 1), # WHITE
+            gn.SHAPE: 'sphere',
+            gn.LABEL: str(self.pov.hid),
+            gn.SIZE: self.sys._getDefaultPointSize() * org_size
+        }
+        self.pov.addEvent(org)
+        return
+
     def showTjys(self):
         # show tjys of all halos not pov
         for id_i in self.sys.hids:
@@ -212,6 +274,7 @@ class HaloView(Scene):
         """
         delay the start of the animation until another halo appears near the pov.
         """
+        pov
         return
     
     def showTjyByStatus(self, host_color=None, sub_color=None,

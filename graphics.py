@@ -158,6 +158,10 @@ class Line(Graphic):
         super().__init__()
         self.halo = halo
         self.setName(f'line_{halo.hid}' if name is None else name)
+        nsnaps = len(halo.z)
+        snaps = np.arange(nsnaps)
+        alv = self.halo.getAlive()
+        self.setSnaps(snaps[alv][0], snaps[alv][-1])
 
 
     def setLinestyle(self, linestyle: str):

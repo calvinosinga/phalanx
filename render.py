@@ -35,15 +35,13 @@ def main(scene_dir, verbose = 1):
         if gn.SHOW_POINTS in styles:
             rep.RenderPointsAsSpheres = bool(styles[gn.SHOW_POINTS])
         
-        # # 6) Legend label (if you want entries in the color legend)
-        # if gn.LABEL in styles:
-        #     rep.LegendLabel = styles[gn.LABEL]
         return
-    vtp_dir = scene_dir + '/vtp/'
     
+    vtp_dir = scene_dir + '/vtp/'
     with open(os.path.join(vtp_dir, "style.json")) as f:
         styles = json.load(f)
 
+    pvs._DisableFirstRenderCameraReset()
     view = pvs.GetActiveViewOrCreate('RenderView')
     scene_style = styles.get(gn.SCENE_KEY, {})
     if gn.BACKGROUND_COLOR in scene_style:
@@ -51,6 +49,7 @@ def main(scene_dir, verbose = 1):
         if max(bg) > 1.0:
             bg = [c / 255.0 for c in bg]
         view.Background = bg
+        view.Background2 = bg
     if gn.CAM_POS in scene_style:
         view.CameraPosition = scene_style[gn.CAM_POS]
     if gn.CAM_FOC in scene_style:
@@ -60,8 +59,12 @@ def main(scene_dir, verbose = 1):
     if gn.CAM_ZOOM in scene_style:
         view.CameraParallelScale = scene_style[gn.CAM_ZOOM]
     if gn.CAM_PROJ in scene_style:
-        view.CameraParallelProjection = int(bool(scene_style[gn.CAMERA_PAR_PROJ]))
-
+        view.CameraParallelProjection = int(bool(scene_style[gn.CAM_PROJ]))
+    if gn.VIEW_SIZE in scene_style:
+        size = list(scene_style[gn.VIEW_SIZE])
+        smax = max(size[0], size[1])
+        size[0] /= smax; size[1] /= smax
+        view.ViewSize = [int(size[0] * 1024), int(size[1] * 1024)]
     if verbose:
         print("loading pvd...")
     tree = ET.parse(vtp_dir + 'scene.pvd')
@@ -80,33 +83,54 @@ def main(scene_dir, verbose = 1):
         fullpath = os.path.join(vtp_dir, bname)
         groups.setdefault(grp, []).append(fullpath)
 
-    if verbose:
-        print("applying custom styles...")
-    for name, file_list in groups.items():
-        reader = pvs.XMLPolyDataReader(FileName = file_list)
-        reader.UpdatePipelineInformation()
-        reader.UpdatePipeline()
 
-        rep = pvs.Show(reader, view)
-        rep.Visibility = 1
+    # anim_scene = pvs.GetAnimationScene()
+    # anim_scene.UpdateAnimationUsingDataTimeSteps()
+    # if verbose:
+    #     print("rendering...")
+    # pvs.Render()
+    # if verbose:
+    #     print("saving state...")
+    # pvs.SaveState(os.path.join(scene_dir, "scene.pvsm"))
+    frames_dir = os.path.join(scene_dir, 'frames/')
+    os.makedirs(frames_dir, exist_ok=True)
+    if verbose:
+        print(f"frames saved in {frames_dir}")
+    # # before your manual loop, print out what the reader *knows* about its timesteps:
+    # for name, reader in readers.items():
+    #     print(f"{name!r} reader.TimestepValues = {reader.TimestepValues}")
+    tstart = int(styles[gn.SCENE_KEY][gn.START])
+    tstop = int(styles[gn.SCENE_KEY][gn.STOP])
+    for t in range(tstart, tstop):
+        if verbose:
+            print(f"\tcreating snapshot {t}...")
+        created = []
+        for name in groups:
+            # build the exact filename for this time (e.g. line_1061_0005.vtp)
+            fname = os.path.join(vtp_dir, f"{name}_{int(t):04d}.vtp")
+            if not os.path.isfile(fname):
+                continue
 
-        _applyStyles(rep, styles[name])
+            # create a fresh reader for this one file
+            reader = pvs.XMLPolyDataReader(FileName=[fname])
+            reader.UpdatePipeline()
 
-    view.ResetCamera()
-    anim_scene = pvs.GetAnimationScene()
-    anim_scene.UpdateAnimationUsingDataTimeSteps()
-    if verbose:
-        print("rendering...")
-    pvs.Render()
-    if verbose:
-        print("saving state...")
-    pvs.SaveState(os.path.join(scene_dir, "scene.pvsm"))
-    os.makedirs(scene_dir + '/frames/', exist_ok=True)
-    movie_path = os.path.join(scene_dir + '/frames/', "frame.png")
-    if verbose:
-        print("creating movie...")
-    pvs.SaveAnimation(movie_path, view)
-    print(f"Movie saved to {movie_path}")
+            # show it and style it
+            rep = pvs.Show(reader, view)
+            rep.Visibility = 1
+            _applyStyles(rep, styles[name])
+
+            # keep track for cleanup
+            created.extend([reader, rep])
+        # view.ResetCamera()
+        pvs.Render()
+        shot_path = os.path.join(frames_dir, f'frame_{int(t):04d}.png')
+        pvs.SaveScreenshot(shot_path, view)
+
+        for proxy in created:
+            pvs.Delete(proxy)
+        
+
     return
 
 
@@ -132,7 +156,7 @@ def render(scene_dir, fps, cleanup_frames = True, verbose = 1):
         return
     
     # 2. Assemble PNGs into a movie with ffmpeg
-    png_pattern = os.path.join(frames_dir, "frame.%04d.png")
+    png_pattern = os.path.join(frames_dir, "frame_%04d.png")
     movie_out = os.path.join(scene_dir, "scene.mp4")
     ffmpeg_cmd = [
         "ffmpeg",

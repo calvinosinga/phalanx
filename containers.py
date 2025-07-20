@@ -1,6 +1,6 @@
 import numpy as np
 import global_names as gn
-from typing import List
+from typing import List, Tuple
 
 class Event:
     """
@@ -134,6 +134,17 @@ class Halo:
     
     def getEvents(self) -> List[Event]:
         return self.events
+    
+    def _getViewBox(self, snap_slc = None) -> Tuple[np.ndarray, np.ndarray]:
+        if snap_slc is None:
+            snap_slc = self.getAlive()
+        mins = self.pos[snap_slc, :].min(axis = 0)
+        maxs = self.pos[snap_slc, :].max(axis = 0)
+        
+        if self.hasField(gn.RADIUS):
+            max_r = np.max(self.radius[snap_slc])
+            return mins - max_r, maxs + max_r
+        return mins, maxs
     # --- Property Accessors for Common Fields --- #
     
     @property
@@ -172,7 +183,7 @@ class System:
     """
     A class that handles how halos interface within a particular system
     """
-    def __init__(self, halo_list, boxsize):
+    def __init__(self, halo_list : List[Halo], boxsize : float):
         self.halos = halo_list
         self.hids = np.zeros(len(halo_list), dtype = int)
         for i,h in enumerate(self.halos):
@@ -187,11 +198,33 @@ class System:
         return self.halos[idx]
     
     def _getDefaultPointSize(self):
-        return self.boxsize * 0.001
+        mins, maxs = self.getViewBox()
+        spans = maxs - mins            # [dx, dy, dz]
+        # rank axes by span: [smallest, middle, largest]
+        large_ax = np.max(spans)
+
+        return 0.001 * large_ax
 
     def getID(self, idx) -> int:
         return self.halos[idx].hid
     
+    def getViewBox(self, start = 0, stop = -1) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Return the overall axis‐aligned bounding box ([mins], [maxs]) in x,y,z
+        that encloses all halos (including their radii, if present).
+        """
+        if not self.halos:
+            raise Exception("Cannot calculate view box without halos.")
+        mins = np.full(3, np.inf)
+        maxs = np.full(3, -np.inf)
+        snap_slc = slice(start, stop)
+        for h in self.halos:
+            hmins, hmaxs = h._getViewBox(snap_slc)
+            mins = np.minimum(mins, hmins)
+            maxs = np.maximum(maxs, hmaxs)
+        return mins, maxs
+    
+
     def setCoMOrigin(self):
         """
         Shift all positions so the center of mass at each snapshot is at the origin,

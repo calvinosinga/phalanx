@@ -19,7 +19,7 @@ CAM_UP = 'camera_view_up'
 CAM_ZOOM = 'camera_parallel_scale'
 CAM_PROJ = 'camera_parallel_projection'
 FRAME_RATE = 'frame_rate'
-
+VIEW_SIZE = 'view_size'
 SCENE_KEY = '_scene'
 
 # graphics constants
@@ -31,6 +31,8 @@ SIZE = 'size'
 SHAPE = 'shape'
 LABEL = 'label'
 TIPSIZE = 'tipsize'
+START = 'start'
+STOP = 'stop'
 SHOW_POINTS = 'show_points'
 
 ALLOWED_LINESTYLES = {'solid', 'dashed', 'dotted'}
