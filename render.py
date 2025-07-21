@@ -45,11 +45,12 @@ def main(scene_dir, verbose = 1):
     view = pvs.GetActiveViewOrCreate('RenderView')
     scene_style = styles.get(gn.SCENE_KEY, {})
     if gn.BACKGROUND_COLOR in scene_style:
+        view.BackgroundColorMode = 'Single Color'
+        view.UseColorPaletteForBackground = 0
         bg = scene_style[gn.BACKGROUND_COLOR]
         if max(bg) > 1.0:
             bg = [c / 255.0 for c in bg]
         view.Background = bg
-        view.Background2 = bg
     if gn.CAM_POS in scene_style:
         view.CameraPosition = scene_style[gn.CAM_POS]
     if gn.CAM_FOC in scene_style:
@@ -101,6 +102,7 @@ def main(scene_dir, verbose = 1):
     #     print(f"{name!r} reader.TimestepValues = {reader.TimestepValues}")
     tstart = int(styles[gn.SCENE_KEY][gn.START])
     tstop = int(styles[gn.SCENE_KEY][gn.STOP])
+    frame_count = 0
     for t in range(tstart, tstop):
         if verbose:
             print(f"\tcreating snapshot {t}...")
@@ -122,11 +124,11 @@ def main(scene_dir, verbose = 1):
 
             # keep track for cleanup
             created.extend([reader, rep])
-        # view.ResetCamera()
+        
         pvs.Render()
-        shot_path = os.path.join(frames_dir, f'frame_{int(t):04d}.png')
+        shot_path = os.path.join(frames_dir, f'frame_{frame_count:04d}.png')
         pvs.SaveScreenshot(shot_path, view)
-
+        frame_count += 1
         for proxy in created:
             pvs.Delete(proxy)
         

@@ -99,12 +99,22 @@ class Halo:
             raise ValueError(f"position needs to have shape (n, 3), has {self.pos.shape}")
         self.z = redshift
         self.alive = np.all(self.pos > 0, axis = 1)
+        nsnaps = len(self.z)
+        snapshots = np.arange(nsnaps)
+        self._first = snapshots[self.alive][0]
+        self._last = snapshots[self.alive][-1]
         self.fields = {}
         for k, v in opt_fields.items():
             self.addField(k, v)
         self.events = []
 
-
+    def _checkSnap(self, snap, msg = None):
+        if msg is None:
+            msg = f"{snap} outside halo lifetime, cannot set."
+        if (snap < self._first) or (snap > self._last):
+            raise ValueError(msg)
+        return 
+    
     def addField(self, name, arr):
         arr = np.asarray(arr)
         nz = len(self.z)
@@ -129,7 +139,10 @@ class Halo:
     def getAlive(self):
         return self.alive
 
-    def addEvent(self, event):
+    def addEvent(self, event : Event):
+        esnap = event.getSnap()
+        msg = f"Event {event.getName()} occurs outside of halos lifetime {self._first}, {self._last}"
+        self._checkSnap(esnap, msg)
         self.events.append(event)
     
     def getEvents(self) -> List[Event]:
@@ -203,7 +216,7 @@ class System:
         # rank axes by span: [smallest, middle, largest]
         large_ax = np.max(spans)
 
-        return 0.001 * large_ax
+        return 0.005 * large_ax
 
     def getID(self, idx) -> int:
         return self.halos[idx].hid

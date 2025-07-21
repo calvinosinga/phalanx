@@ -22,8 +22,9 @@ class Graphic:
 
     def __init__(self):
         self.name = ''
-        self.start = -1
-        self.stop = -1
+        # snapshots that determine when to show the graphic
+        self.disp_start = None
+        self.disp_stop = None
         self.styles = {}
 
     def setName(self, name: str):
@@ -36,12 +37,17 @@ class Graphic:
 
     def getStyle(self):
         styles = copy.deepcopy(self.styles)
-        if self.start != -1:
-            styles['start'] = str(self.start)
-        if self.stop != -1:
-            styles['stop'] = str(self.stop)
+        if self.disp_start is not None:
+            styles['start'] = str(self.disp_start)
+        if self.disp_stop is not None:
+            styles['stop'] = str(self.disp_stop)
         return styles
 
+    def _doDisplay(self, snap)-> bool:
+        if self.disp_start is None or self.disp_stop is None:
+            raise ValueError(f"display timesteps not set for graphic {self.name}")
+        return (snap >= self.disp_start) and (snap <= self.disp_stop)
+    
     def setLabel(self, label: str):
         """Set the label for the graphic."""
         if not isinstance(label, str):
@@ -53,9 +59,9 @@ class Graphic:
         _check_color(color)
         self.styles[gn.COLOR] = color
 
-    def setSnaps(self, start, stop):
-        self.start = start
-        self.stop = stop
+    def setDisplaySnaps(self, start, stop):
+        self.disp_start = start
+        self.disp_stop = stop
         return
     
     def getVTPName(self, snap):
@@ -67,7 +73,29 @@ class Graphic:
             raise ValueError(f"Opacity must be a float between 0 and 1, got {opacity}")
         self.styles[gn.OPACITY] = float(opacity)
 
+    """
+    All the different start/stops can be a little confusing. Each graphic contains
+    its own display start/stop that determines what timesteps we display that
+    particular graphic. For example, markers that indicate when/where events happen
+    should appear at the timestep they occur and then be maintained afterward. The
+    start/stop input into writeVTP delineate the start/stop of the animation. This
+    way we only create the VTP files the user desires. Some graphics, like the Line,
+    contain their own start/stop that indicate WHAT to display. 
+    For example, we sometimes want to create two different line segments from
+    the same trajectory that have different stylings -- in this case, we only want
+    to display a subset of the full trajectory.
+    """
     def writeVTP(self, out_dir, start, stop) -> Tuple[List, List]:
+        """_summary_
+
+        Args:
+            out_dir (_type_): _description_
+            start (_type_): _description_
+            stop (_type_): _description_
+
+        Returns:
+            Tuple[List, List]: filenames and timesteps that were written
+        """
         
         pass
 
@@ -78,15 +106,17 @@ class Sphere(Graphic):
         super().__init__()
         self.halo = halo
         self.setName(f'sphere_{halo.hid}' if name is None else name)
+        # by default, we display the sphere when the halo is alive
+        self.setDisplaySnaps(halo._first, halo._last)
 
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
         radius = self.halo.radius
         position = self.halo.pos
-        alv = self.halo.getAlive()
+        
         fnames = []
         tstep = []
         for isnap in range(start, stop):
-            if not alv[isnap]:
+            if not self._doDisplay(isnap):
                 continue
             # Create sphere mesh in pyvista
 
@@ -107,6 +137,8 @@ class Marker(Graphic):
         self.halo = halo
         self.event = event
         self.setName(f'marker_{halo.hid}_{event.name}' if name is None else name)
+        # by default, we display from when event occurs to halo's death
+        self.setDisplaySnaps(self.event.getSnap(), self.halo._last)
 
 
     def setSize(self, size: float):
@@ -120,17 +152,17 @@ class Marker(Graphic):
         self.styles[gn.SHAPE] = shape
 
     def writeVTP(self, out_dir, start, stop):
-        event_snap = self.event.getSnap()  # snapshot when event occurs
-        self.setSnaps(event_snap, stop)
+
         pos = self.halo.pos
         fnames, tsteps = [], []
+        center = pos[self.event.getSnap()]
+        shape = self.styles.get(gn.SHAPE, 'sphere')
+        size = self.styles.get(gn.SIZE, 1)
         for isnap in range(start, stop):
-            if isnap < event_snap:
+            if not self._doDisplay(isnap):
                 continue  # no marker before the event
             # Marker stays at the event location after it occurs:
-            center = pos[event_snap]
-            shape = self.styles.get(gn.SHAPE, 'sphere')
-            size = self.styles.get(gn.SIZE, 1)
+
             # Create geometry based on shape
             if shape == 'sphere':
                 mesh = pv.Sphere(center=center, radius=size)
@@ -158,12 +190,21 @@ class Line(Graphic):
         super().__init__()
         self.halo = halo
         self.setName(f'line_{halo.hid}' if name is None else name)
-        nsnaps = len(halo.z)
-        snaps = np.arange(nsnaps)
-        alv = self.halo.getAlive()
-        self.setSnaps(snaps[alv][0], snaps[alv][-1])
+        self.setDisplaySnaps(self.halo._first, self.halo._last)
+        # by default we display full tjy
+        self.tjy_start = self.halo._first
+        self.tjy_stop = self.halo._last
 
+    def setTjySnaps(self, start, stop):
+        self.halo._checkSnap(start)
+        self.halo._checkSnap(stop)
+        self.tjy_start = start
+        self.tjy_stop = stop
 
+    def _doDisplay(self, snap):
+        # if the snapshot is before tjy_start, theres nothing to show.
+        return super()._doDisplay(snap) and (snap >= self.tjy_start)
+    
     def setLinestyle(self, linestyle: str):
         """Allowed: solid, dashed, dotted."""
         if not isinstance(linestyle, str):
@@ -191,19 +232,12 @@ class Line(Graphic):
         fnames = []
         tstep = []
         for isnap in range(start, stop):
-            if not alv[isnap]:
-                continue
-            
-            # if snapshot is less than start, don't write vtp
-            if (isnap < self.start) and (self.start != -1):
-                continue
-            # if snapshot is greater than stop, don't write vtp
-            if (isnap > self.stop) and (self.stop != -1):
+            if not self._doDisplay(isnap):
                 continue
 
-            # Alive mask up to and including isnap
-            mask = alv[:isnap + 1]
-            traj_points = pos[:isnap + 1][mask]
+            # should be able to assume that slice is within halos livetime
+            end = min(isnap + 1, self.tjy_stop)
+            traj_points = pos[self.tjy_start:end]
             if traj_points.shape[0] < 2:
                 continue  # Need at least 2 points for a line
             # PyVista expects a lines array like [n_points, 0, 1, ..., n-1]
@@ -216,12 +250,13 @@ class Line(Graphic):
         return fnames, tstep
 
 class Arrow(Graphic):
-
+    # TODO need to set display snaps and adjust writeVTP accordingly
     def __init__(self, halo_from: Halo, halo_to: Halo, name=None):
         super().__init__()
         self.halo_from = halo_from
         self.halo_to = halo_to
         self.setName(f'arrow_{halo_from.hid}_{halo_to.hid}' if name is None else name)
+        
 
     def setLinewidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
@@ -267,10 +302,3 @@ class Plot2D:
     
     # TODO implement later
         
-
-class LineSegment(Graphic):
-
-    def __init__(self):
-        super().__init__()
-    
-    #TODO implement later, basically contains a series of lines that change properties

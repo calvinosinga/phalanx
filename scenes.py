@@ -48,12 +48,12 @@ class Scene:
                     m.setSize(self.sys._getDefaultPointSize())
                 else:
                     m.setSize(ds[gn.SIZE])
-                m.setSnaps(ev.getSnap(), self.stop)
+                m.setDisplaySnaps(ev.getSnap(), self.stop)
                 self.graphics.append(m)
 
         return
     
-    def setSnap(self, start, stop):
+    def setAnimSnap(self, start, stop):
         """
         the snapshots the animation will show
         Args:
@@ -161,7 +161,7 @@ class Scene:
         padding_frac (float): fraction of the max span to pad on each side.
         """
         # get bounding box of all halos
-        mins, maxs = self.sys.getViewBox()
+        mins, maxs = self.sys.getViewBox(self.start, self.stop)
         center = (mins + maxs) / 2.0
         spans = maxs - mins            # [dx, dy, dz]
         # rank axes by span: [smallest, middle, largest]
@@ -210,14 +210,15 @@ class Scene:
         halo_to = self.sys.getHalo(halo_to_id)
         arrow = Arrow(halo_from, halo_to)
         if start >= 0 and stop >= 0:
-            arrow.setSnaps(start, stop)
+            arrow.setDisplaySnaps(start, stop)
 
         return arrow
 
     def makeSegment(self, halo_id, start, stop):
         halo = self.sys.getHalo(halo_id)
         seg = Line(halo)
-        seg.setSnaps(start, stop)
+        seg.setTjySnaps(start, stop)
+        seg.setDisplaySnaps(start, halo._last)
         seg.setName(f"{seg.getName()}_{start}_{stop}")
         return seg
     
@@ -232,10 +233,7 @@ class HaloView(Scene):
         self.pov = system.getHalo(pov_id)
         super().__init__(system)
         self.sys.setHaloOrigin(self.pov.hid)
-        nsnaps = len(self.sys.halos[0].pos)
-        snaps = np.arange(nsnaps)
-        alv = self.pov.getAlive()
-        self.setSnap(snaps[alv][0], snaps[alv][-1])
+        self.setAnimSnap(self.pov._first, self.pov._last)
         return
 
     def POVBoundary(self):
@@ -251,7 +249,7 @@ class HaloView(Scene):
             org_size (float, optional): size of origin marker, expressed as fraction of
              default calculated by the system. Defaults to 0.2.
         """
-        org = Event(self.start, "origin")
+        org = Event(self.pov._first, "origin")
         org.def_style = {
             gn.COLOR: (1, 1, 1), # WHITE
             gn.SHAPE: 'sphere',
@@ -269,13 +267,6 @@ class HaloView(Scene):
             tjy = self.makeTjy(id_i)
             self.addGraphic(tjy)
         return
-        
-    def startAtFirstInfall(self):
-        """
-        delay the start of the animation until another halo appears near the pov.
-        """
-        pov
-        return
     
     def showTjyByStatus(self, host_color=None, sub_color=None,
                         alt_sub_color=None, do_ghost=False):
@@ -284,6 +275,7 @@ class HaloView(Scene):
         and optionally applies ghost style overlay (dashed) if status >= 30.
         Single-snapshot segments get a Marker instead of a line (except ghost-only).
         """
+        print(f"creating tjy segments between the snapshots {self.start} and {self.stop}...")
         if host_color is None:
             host_color = (0.2, 0.4, 1.0)      # medium blue
         if sub_color is None:
@@ -296,6 +288,7 @@ class HaloView(Scene):
         pov_id = self.pov.hid
 
         for hid in self.sys.hids:
+            # don't draw tjy for pov halo
             if hid == pov_id:
                 continue
 
@@ -322,9 +315,6 @@ class HaloView(Scene):
                     return 'unknown'
 
             N = len(relevant_snaps)
-            if N == 0:
-                continue
-
             categories = [get_category(pid[i]) for i in range(N)]
             ghosts = [do_ghost and status[i] >= 30 for i in range(N)]
 
@@ -359,11 +349,20 @@ class HaloView(Scene):
                 style[gn.COLOR] = color
                 if seg_ghost:
                     style.update(ghost_style)
+                # figure out where to start the line:
+                if i == 0:
+                    # first iter: start at its own first point
+                    seg_start_snap = relevant_snaps[start_idx]
+                else:
+                    # back up one so we include the previous point
+                    seg_start_snap = relevant_snaps[start_idx - 1]
+                
+                # always end at the last point of this run (+1 so makeSegment includes it)
+                seg_stop_snap = relevant_snaps[stop_idx - 1] + 1
 
-                if seg_len == 1:
-                    # For ghost-only, skip marker if only occurs for one frame
-                    if seg_ghost:
-                        continue
+                # if it's the first segment *and* genuinely only one point, do a Marker
+                if seg_len == 1 and i == 0:
+
                     # Add a Marker instead of a Line
                     m = Marker(halo, snap=seg_snap)
                     m.setColor(color)
@@ -373,8 +372,6 @@ class HaloView(Scene):
                     m.setName(f"marker_{hid}_{seg_cat}_{seg_snap}")
                     self.addGraphic(m)
                 else:
-                    seg_start_snap = relevant_snaps[start_idx]
-                    seg_stop_snap = relevant_snaps[stop_idx-1]+1
                     segment = self.makeSegment(hid, seg_start_snap, seg_stop_snap)
                     segment.setColor(color)
                     if seg_ghost:
