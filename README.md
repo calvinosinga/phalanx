@@ -1,6 +1,6 @@
 # Phalanx
 
-Pipeline for Halo Animation & Lineage Assessment in N-body eXperiments (phalanx) is a pipeline for visualizing halo systems and interactions, assessing differences in subhalo definitions, and comparing methods of calculating halo trajectories. Generally, the pipeline is broken down into four steps:
+Pipeline for Halo Animation & Lineage Assessment in N-body eXperiments (phalanx) is a tool for visualizing halo systems and interactions, assessing differences in subhalo definitions, and comparing methods of calculating halo trajectories. Generally, the pipeline is broken down into four steps:
 1. Create container objects that store the halo data
 2. Select a way to display the data and style it
 3. Export the cached objects into VTK (visualization toolkit) files
@@ -32,7 +32,8 @@ There are three kinds of data containers: Event, Halo, and System. An Event (has
 ```python
 from phalanx.containers import System
 sys = System([host_halo, sub_halo], spa['simulation']['box_size'])
-sys.setCOMOrigin() # adjusts positions of all halos in system to be wrt the center of mass of the system
+# adjust halo positions to be wrt the center of mass of the system
+sys.setCOMOrigin() 
 ```
 
 # Step 2: How to Display it
