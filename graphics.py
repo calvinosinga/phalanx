@@ -43,6 +43,23 @@ class Graphic:
             styles['stop'] = str(self.disp_stop)
         return styles
 
+    def setStyle(self, sdict: dict) -> None:
+        """Apply *sdict* entries to a Graphic object in a unified way."""
+        if gn.COLOR in sdict:
+            self.setColor(sdict[gn.COLOR])
+        if gn.OPACITY in sdict:
+            self.setOpacity(sdict[gn.OPACITY])
+        if gn.LWIDTH in sdict:
+            self.setLineWidth(sdict[gn.LWIDTH])
+        if gn.LSTYLE in sdict:
+            self.setLineStyle(sdict[gn.LSTYLE])
+        if gn.LABEL in sdict:
+            self.setLabel(sdict[gn.LABEL])
+        if gn.SHAPE in sdict:
+            self.setShape(sdict[gn.SHAPE])
+        if gn.TIPSIZE in sdict:
+            self.setTipsize(sdict[gn.TIPSIZE])
+        
     def _doDisplay(self, snap)-> bool:
         if self.disp_start is None or self.disp_stop is None:
             raise ValueError(f"display timesteps not set for graphic {self.name}")
@@ -58,6 +75,27 @@ class Graphic:
         """Set the color for the graphic."""
         _check_color(color)
         self.styles[gn.COLOR] = color
+
+    def setSize(self, size: float):
+        raise NotImplementedError(f"size not compatible for graphic {self.__class__}")
+
+    def setShape(self, shape: str):
+        raise NotImplementedError(f"shape not compatible for graphic {self.__class__}")
+    
+    def setLinestyle(self, linestyle: str):
+        raise NotImplementedError(f"linestyle not compatible for graphic {self.__class__}")
+
+
+    def setLinewidth(self, linewidth: float):
+        raise NotImplementedError(f"linewidth not compatible for graphic {self.__class__}")
+
+
+    def setShowPoints(self, show: bool):
+        raise NotImplementedError(f"show_points not compatible for graphic {self.__class__}")
+
+    def setTipsize(self, tipsize: float):
+        raise NotImplementedError(f"tip size not compatible for graphic {self.__class__}")
+
 
     def setDisplaySnaps(self, start, stop):
         self.disp_start = start
@@ -228,7 +266,6 @@ class Line(Graphic):
         the trajectory up to and including that snapshot.
         """
         pos = self.halo.pos
-        alv = self.halo.getAlive()
         fnames = []
         tstep = []
         for isnap in range(start, stop):
@@ -250,14 +287,26 @@ class Line(Graphic):
         return fnames, tstep
 
 class Arrow(Graphic):
-    # TODO need to set display snaps and adjust writeVTP accordingly
     def __init__(self, halo_from: Halo, halo_to: Halo, name=None):
         super().__init__()
         self.halo_from = halo_from
         self.halo_to = halo_to
         self.setName(f'arrow_{halo_from.hid}_{halo_to.hid}' if name is None else name)
-        
+        self.mask = None
+        # disp snaps must be defined by user
 
+    def setDisplayMask(self, mask):
+        if len(mask) != len(self.halo_from.z):
+            raise ValueError("mask is incorrect size")
+        self.mask = mask
+        return
+    
+    def _doDisplay(self, snap):
+        if self.mask is None:
+            return super()._doDisplay(snap)
+        
+        return self.mask[snap]
+    
     def setLinewidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
         self.styles[gn.LWIDTH] = float(linewidth)
@@ -268,7 +317,6 @@ class Arrow(Graphic):
 
     def writeVTP(self, out_dir, start, stop):
         posA = self.halo_from.pos; posB = self.halo_to.pos
-        aliveA = self.halo_from.getAlive(); aliveB = self.halo_to.getAlive()
         fnames, tsteps = [], []
         # Determine tip and shaft sizes from styles or defaults
         tip_frac = self.styles.get(gn.TIPSIZE, 0.25)  # fraction of length for arrow tip
@@ -278,8 +326,8 @@ class Arrow(Graphic):
             base_tip_radius *= lw
             base_shaft_radius *= lw
         for isnap in range(start, stop):
-            if not (aliveA[isnap] and aliveB[isnap]):
-                continue  # only draw if both halos exist at this snap
+            if not self._doDisplay(isnap): # throws error if disp snaps not defined
+                continue
             start_pt = posA[isnap]; end_pt = posB[isnap]
             direction = end_pt - start_pt
             if np.linalg.norm(direction) == 0:

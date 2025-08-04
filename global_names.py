@@ -22,7 +22,7 @@ FRAME_RATE = 'frame_rate'
 VIEW_SIZE = 'view_size'
 SCENE_KEY = '_scene'
 
-# graphics constants
+# graphics style constants - all should be implemented in graphic._setStyle
 COLOR = 'color'
 OPACITY = 'opacity'
 LSTYLE = 'linestyle'
@@ -31,9 +31,12 @@ SIZE = 'size'
 SHAPE = 'shape'
 LABEL = 'label'
 TIPSIZE = 'tipsize'
+SHOW_POINTS = 'show_points'
+
+# other graphics constants
 START = 'start'
 STOP = 'stop'
-SHOW_POINTS = 'show_points'
+
 
 ALLOWED_LINESTYLES = {'solid', 'dashed', 'dotted'}
 ALLOWED_MARKER_SHAPES = {'sphere', 'cube', 'cone', 'arrow', 'cylinder', 'point'}

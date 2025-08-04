@@ -1,6 +1,6 @@
 import numpy as np
 import global_names as gn
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 class Event:
     """
@@ -85,7 +85,15 @@ class SwitchStatus(Event):
             gn.SHAPE : 'cone'
         }
     
+class Death(Event):
 
+    def _setDefaultStyle(self):
+        self.def_style = {
+            gn.COLOR : (1, 0, 0), # red
+            gn.LABEL : 'death',
+            gn.SHAPE : 'cube'
+        }
+        return
 class Halo:
     """
     Class that stores data relevant to an individual halo.
@@ -179,15 +187,14 @@ class Halo:
     @property
     def velocity(self):
         return self.getField(gn.VEL)
-
+    
     @property
     def pid(self):
         return self.getField(gn.PID)
-
-    @property
+    
     def upid(self):
         return self.getField(gn.UPID)
-
+    
     @property
     def status(self):
         return self.getField(gn.STATUS)
@@ -201,7 +208,7 @@ class System:
         self.hids = np.zeros(len(halo_list), dtype = int)
         for i,h in enumerate(self.halos):
             self.hids[i] = h.hid
-        self.boxsize = boxsize
+        self.boxsize = boxsize # should match radius units, namely physical kpc (at z = 0)
         return
     
     def getHalo(self, hid) -> Halo:
@@ -210,6 +217,11 @@ class System:
         idx = np.where(self.hids == hid)[0][0]
         return self.halos[idx]
     
+    def _checkKey(self, key_name):
+        for h in self.sys.halos:
+            if not h.hasField(key_name):
+                raise KeyError(f"halo {h.hid} does not have field {key_name}.") 
+
     def _getDefaultPointSize(self):
         mins, maxs = self.getViewBox()
         spans = maxs - mins            # [dx, dy, dz]

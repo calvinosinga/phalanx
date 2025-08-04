@@ -10,6 +10,8 @@ def makeHalo(sminterface, halo_id, default_position = 'x_spa') -> Halo:
     halo_data = sminterface.getCat(ogid)
     pos = halo_data[default_position][:,:]
     pos = np.squeeze(pos)
+    # by default, pos is in cMpc/h. convert to physical kpc / h (agrees with tracers)
+    pos = pos * 1e3 / (1 + sminterface.s['simulation']['snap_z'][:, np.newaxis])
     halo = Halo(ogid, pos, sminterface.s['simulation']['snap_z'])
 
     return halo
@@ -55,11 +57,21 @@ def addApo(sminterface, halos, host_id = -1):
 def addTjy(sminterface, halos, host_id):
     for h in halos:
         out = sminterface.getRes(host_id, h.hid, result_type = 'res_tjy', return_host_ids = True)
-        # should only have size of 1
-        h.addField(gn.VR, out['vr'])
-        h.addField(gn.VT, out['vt'])
-        h.addField('dist', out['r'])
+        # should have shape (ntcr = 1, nsnaps)
+        h.addField(gn.VR, out['vr'][0, :])
+        h.addField(gn.VT, out['vt'][0, :])
+        h.addField('dist', out['r'][0, :])
         
+    return
+
+def pidToOrig(sminterface, halos : List[Halo], pid_keys = List[str]):
+    for h in halos:
+        halo_data = sminterface.getCat(h.hid)
+        for key in pid_keys:
+            pids = halo_data[key].copy(); pid_mask = pids > 0
+            og_pids = sminterface.getOrigID(pids[pid_mask])
+            pids[pid_mask] = og_pids
+            h.addField(key, pids)
     return
 
 def addCat(
@@ -77,7 +89,7 @@ def addCat(
 
         # get moria data for this halo
         halo_data = sminterface.getCat(h.hid)
-        h.addField(gn.RADIUS, halo_data[default_radius] / 1e3 / sminterface.s['simulation']['h'])
+        h.addField(gn.RADIUS, halo_data[default_radius])
         h.addField(gn.MASS, halo_data[default_mass])
         # all parent ids need to be their original ID
         pids = halo_data[default_pid].copy(); pid_mask = pids > 0
