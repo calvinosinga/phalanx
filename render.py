@@ -35,6 +35,13 @@ def main(scene_dir, verbose = 1):
         if gn.SHOW_POINTS in styles:
             rep.RenderPointsAsSpheres = bool(styles[gn.SHOW_POINTS])
         
+        # 6) lighting
+        if gn.LIGHTING in styles and bool(styles[gn.LIGHTING]):
+            rep.Diffuse = 0.8
+            rep.Specular = 0.4
+            rep.SpecularPower = 25
+            rep.Ambient = 0.2
+
         return
     
     vtp_dir = scene_dir + '/vtp/'

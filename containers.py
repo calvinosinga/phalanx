@@ -55,13 +55,7 @@ class Apo(Event):
         self.host_id = host_id
         self.name = f"{self.name}_{host_id}"
         return
-# class Death(Event):
-#     def _setDefaultStyle(self):
-#         self.def_style = {
-#             g.COLOR : (255, 255, 0), # yellow
-#             g.LABEL : 'pericenter',
-#             g.SHAPE : 'sphere'
-#         }
+
 
 class Ifl(Event):
     def _setDefaultStyle(self):
@@ -94,6 +88,7 @@ class Death(Event):
             gn.SHAPE : 'cube'
         }
         return
+
 class Halo:
     """
     Class that stores data relevant to an individual halo.
@@ -110,7 +105,7 @@ class Halo:
         nsnaps = len(self.z)
         snapshots = np.arange(nsnaps)
         self._first = snapshots[self.alive][0]
-        self._last = snapshots[self.alive][-1]
+        self._last = snapshots[self.alive][-1] + 1 # add one to make it exclusive
         self.fields = {}
         for k, v in opt_fields.items():
             self.addField(k, v)
@@ -132,7 +127,7 @@ class Halo:
             arr = np.full((nz,), arr)
         elif arr.shape[0] != nz:
             raise ValueError(f"Field '{name}' must have first dimension of length {nz}, but got shape {arr.shape}")
-        
+        arr = np.squeeze(arr)
         self.fields[name] = arr
 
 
@@ -156,7 +151,7 @@ class Halo:
     def getEvents(self) -> List[Event]:
         return self.events
     
-    def _getViewBox(self, snap_slc = None) -> Tuple[np.ndarray, np.ndarray]:
+    def _getRange(self, snap_slc = None) -> Tuple[np.ndarray, np.ndarray]:
         if snap_slc is None:
             snap_slc = self.getAlive()
         mins = self.pos[snap_slc, :].min(axis = 0)
@@ -222,18 +217,17 @@ class System:
             if not h.hasField(key_name):
                 raise KeyError(f"halo {h.hid} does not have field {key_name}.") 
 
-    def _getDefaultPointSize(self):
-        mins, maxs = self.getViewBox()
-        spans = maxs - mins            # [dx, dy, dz]
-        # rank axes by span: [smallest, middle, largest]
-        large_ax = np.max(spans)
-
-        return 0.005 * large_ax
 
     def getID(self, idx) -> int:
         return self.halos[idx].hid
     
-    def getViewBox(self, start = 0, stop = -1) -> Tuple[np.ndarray, np.ndarray]:
+    def createDeathEvents(self):
+        for h in self.halos:
+            evt = Death(h._last - 1, f'death_{h.hid}') # _last is exclusive
+            h.addEvent(evt)
+        return
+    
+    def getRange(self, start = 0, stop = -1) -> Tuple[np.ndarray, np.ndarray]:
         """
         Return the overall axis‐aligned bounding box ([mins], [maxs]) in x,y,z
         that encloses all halos (including their radii, if present).
@@ -244,7 +238,7 @@ class System:
         maxs = np.full(3, -np.inf)
         snap_slc = slice(start, stop)
         for h in self.halos:
-            hmins, hmaxs = h._getViewBox(snap_slc)
+            hmins, hmaxs = h._getRange(snap_slc)
             mins = np.minimum(mins, hmins)
             maxs = np.maximum(maxs, hmaxs)
         return mins, maxs
@@ -314,7 +308,6 @@ class System:
             raise ValueError(f"Host halo ID {halo_id} not found")
         host = self.halos[idxs[0]]
 
-        nsnaps = host.pos.shape[0]
         host_pos = host.pos.copy()
         host_alive = host.getAlive()
 
@@ -330,9 +323,3 @@ class System:
         bs = self.boxsize
         return (delta + 0.5 * bs) % bs - 0.5 * bs
     
-    def getPidIdx(self):
-
-        return
-
-    def getUpidIdx(self):
-        return

@@ -59,6 +59,8 @@ class Graphic:
             self.setShape(sdict[gn.SHAPE])
         if gn.TIPSIZE in sdict:
             self.setTipsize(sdict[gn.TIPSIZE])
+        if gn.LIGHTING in sdict:
+            self.setLighting(sdict[gn.LIGHTING])
         
     def _doDisplay(self, snap)-> bool:
         if self.disp_start is None or self.disp_stop is None:
@@ -96,12 +98,32 @@ class Graphic:
     def setTipsize(self, tipsize: float):
         raise NotImplementedError(f"tip size not compatible for graphic {self.__class__}")
 
-
+    def setLighting(self, light: bool):
+        raise NotImplementedError(f"lighting not compatible with graphic {self.__class__}")
+    
     def setDisplaySnaps(self, start, stop):
         self.disp_start = start
         self.disp_stop = stop
         return
     
+    def showOnlyInView(self, mins, maxs):
+        if not hasattr(self, 'halo'):
+            raise NotImplementedError(f"showOnlyInView by default assumes halo attr, DNE in {self.__class__}")
+        # Ensure NumPy arrays with shape (3,)
+        mins = np.asarray(mins, dtype=float)
+        maxs = np.asarray(maxs, dtype=float)
+
+        # Boolean mask: True where the position is inside the box for *all* axes
+        in_box = np.all((self.halo.pos >= mins) & (self.halo.pos <= maxs), axis=1)
+
+        # Find the first True; np.flatnonzero avoids the 0-when-all-False pitfall
+        hits = np.flatnonzero(in_box)
+        if hits.size:
+            self.disp_start = int(hits[0])
+        else:
+            self.disp_start = np.inf # never display
+    
+
     def getVTPName(self, snap):
         return f"{self.getName()}_{snap:04d}.vtp"
     
@@ -110,7 +132,7 @@ class Graphic:
         if not isinstance(opacity, (float, int)) or not (0 <= opacity <= 1):
             raise ValueError(f"Opacity must be a float between 0 and 1, got {opacity}")
         self.styles[gn.OPACITY] = float(opacity)
-
+        
     """
     All the different start/stops can be a little confusing. Each graphic contains
     its own display start/stop that determines what timesteps we display that
@@ -146,7 +168,12 @@ class Sphere(Graphic):
         self.setName(f'sphere_{halo.hid}' if name is None else name)
         # by default, we display the sphere when the halo is alive
         self.setDisplaySnaps(halo._first, halo._last)
+        self.setLighting(True)
 
+    def setLighting(self, light: bool):
+        self.styles[gn.LIGHTING] = light
+        return
+    
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
         radius = self.halo.radius
         position = self.halo.pos
@@ -177,7 +204,6 @@ class Marker(Graphic):
         self.setName(f'marker_{halo.hid}_{event.name}' if name is None else name)
         # by default, we display from when event occurs to halo's death
         self.setDisplaySnaps(self.event.getSnap(), self.halo._last)
-
 
     def setSize(self, size: float):
         _check_positive_float(size, "Size")
@@ -314,6 +340,23 @@ class Arrow(Graphic):
     def setTipsize(self, tipsize: float):
         _check_positive_float(tipsize, "Tipsize")
         self.styles[gn.TIPSIZE] = float(tipsize)
+
+    def showOnlyInView(self, mins, maxs):
+
+        # Ensure NumPy arrays with shape (3,)
+        mins = np.asarray(mins, dtype=float)
+        maxs = np.asarray(maxs, dtype=float)
+
+        # Boolean mask: True where the position is inside the box for *all* axes
+        to_in_box = np.all((self.halo_to.pos >= mins) & (self.halo_to.pos <= maxs), axis=1)
+        from_in_box = np.all((self.halo_from.pos >= mins) & (self.halo_from.pos <= maxs), axis=1)
+        in_box = to_in_box & from_in_box
+        # Find the first True; np.flatnonzero avoids the 0-when-all-False pitfall
+        hits = np.flatnonzero(in_box)
+        if hits.size:
+            self.disp_start = int(hits[0])
+        else:
+            self.disp_start = np.inf # never display
 
     def writeVTP(self, out_dir, start, stop):
         posA = self.halo_from.pos; posB = self.halo_to.pos

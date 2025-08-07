@@ -6,53 +6,24 @@ import global_names as gn
 import copy
 
 class Scene:
-
+    """
+    Class that handles first how to view the data (camera settings, background, lighting, animation snapshots)
+    and then what data/graphics get shown. 
+    """
     def __init__(self, system : System) -> None:
         if len(system.halos) < 1:
             raise ValueError("system has no halos, nothing to show")
         self.sys = system
         self.graphics : List[Graphic] = []
         self.start = 0
-        self.stop = len(self.sys.halos[0].pos)
+        self.stop = len(self.sys.halos[0].pos)  # exclusive
 
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
         self.setCameraParallelProjection(True) # almost always don't want perspective projection
         return
-    
-    def getGraphics(self) -> List[Graphic]:
-        return self.graphics
-    
-    def addGraphic(self, graphic) -> None:
-        self.graphics.append(graphic)
-        return
-    
-    def rmGraphic(self, name) -> None:
-        # TODO find the graphic that matches the name, print warning if no graphic with that name is found
-        return
-    
-    def rmGraphicHalo(self, halo_id):
-        # TODO remove all graphics associated with a particular halo
-        return
-    
-    def addEvents(self):
-        for h in self.sys.halos:
-            events = h.getEvents()
-            for ev in events:
-                m = Marker(h, ev)
-                ds = ev.def_style
-                m.setColor(ds[gn.COLOR])
-                m.setLabel(ds[gn.LABEL])
-                m.setShape(ds[gn.SHAPE])
-                if gn.SIZE not in ds:
-                    m.setSize(self.sys._getDefaultPointSize())
-                else:
-                    m.setSize(ds[gn.SIZE])
-                m.setDisplaySnaps(ev.getSnap(), self.stop)
-                self.graphics.append(m)
 
-        return
-    
+    # --- Phase 1: Scene Property Methods ---
     def setAnimSnap(self, start, stop):
         """
         the snapshots the animation will show
@@ -67,9 +38,10 @@ class Scene:
         self.stop = stop
         return
     
-    # --- Scene Property Setters ---
+
     def getSceneProps(self):
         rprops = copy.deepcopy(self.render_props)
+        # can I delete these?
         rprops['start'] = str(self.start)
         rprops['stop'] = str(self.stop)
         rprops['nframes'] = str(self.stop - self.start + 1)
@@ -150,7 +122,8 @@ class Scene:
         else:
             raise ValueError("View size must be tuple/list of 2 numbers.")
 
-
+    def getViewBox(self): # we default to using system's view box
+        return self.sys.getRange(self.start, self.stop)
 
     def autoCam(self, padding_frac: float = 0.05) -> None:
         """
@@ -161,7 +134,7 @@ class Scene:
         padding_frac (float): fraction of the max span to pad on each side.
         """
         # get bounding box of all halos
-        mins, maxs = self.sys.getViewBox(self.start, self.stop)
+        mins, maxs = self.getViewBox()
         center = (mins + maxs) / 2.0
         spans = maxs - mins            # [dx, dy, dz]
         # rank axes by span: [smallest, middle, largest]
@@ -193,7 +166,33 @@ class Scene:
         self.setViewSize((width, height))
     
 
-    # --- Graphic creation methods ---
+    # --- Phase 2 (Graphic creation/manipulation) ---
+    
+    def getGraphics(self) -> List[Graphic]:
+        return self.graphics
+    
+    def addGraphic(self, graphic) -> None:
+        self.graphics.append(graphic)
+        return
+    
+    def addEvents(self):
+        for h in self.sys.halos:
+            events = h.getEvents()
+            for ev in events:
+                m = Marker(h, ev)
+                ds = ev.def_style
+                m.setColor(ds[gn.COLOR])
+                m.setLabel(ds[gn.LABEL])
+                m.setShape(ds[gn.SHAPE])
+                if gn.SIZE not in ds:
+                    m.setSize(self._getDefaultPointSize())
+                else:
+                    m.setSize(ds[gn.SIZE])
+                m.setDisplaySnaps(ev.getSnap(), self.stop)
+                self.graphics.append(m)
+
+        return
+
     
     def makeTjy(self, halo_id) -> Line:
         halo = self.sys.getHalo(halo_id)
@@ -233,22 +232,49 @@ class Scene:
    
         return arr_list
     
-class HaloView(Scene):
+    def createDeathEvents(self):
+        self.sys.createDeathEvents()
+    
+    def _getDefaultPointSize(self):
+        mins, maxs = self.getViewBox()
+        spans = maxs - mins            # [dx, dy, dz]
+        # rank axes by span: [smallest, middle, largest]
+        large_ax = np.max(spans)
+
+        return 0.005 * large_ax
+
+    # phase 3: methods for adjusting graphics
+    def deleteGraphicsAfterDeath(self):
+        for gph in self.graphics:
+            # by default, arrows are not drawn when halo dies
+            # only need to rm lines, markers and spheres
+            if isinstance(gph, (Marker, Sphere, Line)):
+                death_snap = gph.halo._last
+                gph.setDisplaySnaps(gph.disp_start, death_snap)
+
+        return
+    # doesn't work...
+    # def rmLinePoints(self):
+    #     for gph in self.graphics:
+    #         if isinstance(gph, Line):
+    #             gph.setShowPoints(False)
+
+class HostView(Scene):
     """
-    For scenes that involve following a single halo. Special methods are provided to give
-    special treatment to the pov halo. Most common usage will involve following the host
-    of a particular system and seeing how subhalos interact with it.
+    For scenes that involve following a single host/satellites system. Methods are provided to give
+    special treatment to the host.
     """
     def __init__(self, system : System, pov_id : int): # also allow pov to be halo object
         self.pov = system.getHalo(pov_id)
         super().__init__(system)
         self.sys.setHaloOrigin(self.pov.hid)
         self.setAnimSnap(self.pov._first, self.pov._last)
+
         return
 
-    def POVBoundary(self):
+    def hostBoundary(self):
         sphere = self.makeSphere(self.pov.hid)
-        sphere.setOpacity(0.15)
+        sphere.setOpacity(0.3)
         self.addGraphic(sphere)
         return
     
@@ -264,7 +290,7 @@ class HaloView(Scene):
             gn.COLOR: (1, 1, 1), # WHITE
             gn.SHAPE: 'sphere',
             gn.LABEL: str(self.pov.hid),
-            gn.SIZE: self.sys._getDefaultPointSize() * org_size
+            gn.SIZE: self._getDefaultPointSize() * org_size
         }
         self.pov.addEvent(org)
         return
@@ -285,12 +311,13 @@ class HaloView(Scene):
         and optionally applies ghost style overlay (dashed) if status >= 30.
         Single-snapshot segments get a Marker instead of a line (except ghost-only).
         """
+        
         if host_color is None:
             host_color = (0.2, 0.4, 1.0)      # medium blue
         if sub_color is None:
             sub_color = (1.0, 0.2, 0.2)       # red
         if alt_sub_color is None:
-            alt_sub_color = (1.0, 0.55, 0.41) # salmon
+            alt_sub_color = (1.0, 0.75, 0.79) # pink
 
         ghost_style = {gn.LSTYLE: 'dashed'}
 
@@ -328,21 +355,22 @@ class HaloView(Scene):
             ghosts = [do_ghost and status[i] >= 30 for i in range(N)]
 
             # Segment the trajectory by contiguous blocks of the same category and ghost flag
-            seg_starts = [0]
+
+            seg_starts = [halo._first]
             seg_cats = [(categories[0], ghosts[0])]
             for i in range(1, N):
                 if (categories[i], ghosts[i]) != (categories[i-1], ghosts[i-1]):
-                    seg_starts.append(i)
+                    seg_starts.append(i + halo._first)
                     seg_cats.append((categories[i], ghosts[i]))
-            seg_starts.append(N)  # end
-
+            seg_starts.append(halo._last)  # end
             for i in range(len(seg_starts)-1):
-                start_idx = seg_starts[i]
-                stop_idx = seg_starts[i+1]
-                seg_len = stop_idx - start_idx
-                seg_snap = relevant_snaps[start_idx]
+                if i == 0:
+                    start_snap = seg_starts[i]
+                else:
+                    start_snap = seg_starts[i] - 1
+                stop_snap = seg_starts[i+1]
+                seg_len = stop_snap - start_snap
                 seg_cat, seg_ghost = seg_cats[i]
-
                 # Pick color
                 if seg_cat == 'host':
                     color = host_color
@@ -358,38 +386,72 @@ class HaloView(Scene):
                 style[gn.COLOR] = color
                 if seg_ghost:
                     style.update(ghost_style)
-                # figure out where to start the line:
-                if i == 0:
-                    # first iter: start at its own first point
-                    seg_start_snap = relevant_snaps[start_idx]
-                else:
-                    # back up one so we include the previous point
-                    seg_start_snap = relevant_snaps[start_idx - 1]
-                
-                # always end at the last point of this run (+1 so makeSegment includes it)
-                seg_stop_snap = relevant_snaps[stop_idx - 1] + 1
 
+                
+                
                 # if it's the first segment *and* genuinely only one point, do a Marker
                 if seg_len == 1 and i == 0:
 
                     # Add a Marker instead of a Line
-                    m = Marker(halo, snap=seg_snap)
+                    evt = Event(start_snap)
+                    m = Marker(halo, evt)
                     m.setColor(color)
-                    m.setSize(self.sys._getDefaultPointSize())
+                    m.setSize(self._getDefaultPointSize())
                     m.setLabel(seg_cat)
                     m.setShape('sphere')
-                    m.setName(f"marker_{hid}_{seg_cat}_{seg_snap}")
+                    m.setName(f"marker_{hid}_{seg_cat}_{start_snap}")
                     self.addGraphic(m)
                 else:
-                    segment = self.makeSegment(hid, seg_start_snap, seg_stop_snap)
+                    segment = self.makeSegment(hid, start_snap, stop_snap)
+
                     segment.setColor(color)
                     if seg_ghost:
                         segment.setStyle(ghost_style)
                     self.addGraphic(segment)
         return
     
+class HostViewZoom(HostView):
+
+    def __init__(self, system, pov_id):
+        super().__init__(system, pov_id)
+        if self.pov.hasField(gn.RADIUS):
+            self.zoom_box_length = 1.05 * np.max(self.pov.radius)
+        else:
+            print("WARNING: default zoom box length requires host radius, user must set...")
+            self.zoom_box_length = None
+
+    def setViewCube(self, box_length):
+        self.zoom_box_length = box_length
+        return
     
-class TjyComp(HaloView):
+    def setViewMaxRad(self, max_rad_frac):
+        
+        self.zoom_box_length = max_rad_frac * np.max(self.pov.radius)
+    
+    def setViewRadSnap(self, rad_frac, snap):
+        self.zoom_box_length = rad_frac * self.pov.radius[snap]
+    
+
+    def onlyInBox(self): 
+        # only show graphics that occur within the box. without this on, graphics that
+        # occur along the los will still be shown even without being close by.
+
+        # if we are not zoomed in, then by default all graphics are included
+
+        
+        for gph in self.graphics:
+            mins, maxs = self.getViewBox()
+            gph.showOnlyInView(mins, maxs)
+        return
+                
+    def getViewBox(self):
+        if self.zoom_box_length is None:
+            raise ValueError("zoom box length not set")
+        mins = np.array([-self.zoom_box_length]*3)
+        maxs = np.array([self.zoom_box_length]*3)
+        return mins, maxs
+
+class TjyComp(HostView):
     """
     For scenes where we want to compare the trajectories of two instances of the
     same subhalo. We expect that these will be from the PoV of the host, so the
@@ -499,6 +561,22 @@ class TjyComp(HaloView):
         raise NotImplementedError("function not defined in TjyComp")
         
 
+class SubhaloView(HostView):
+
+    def __init__(self, system, pov_id):
+        super().__init__(system, pov_id)
+
+    def hostBoundary(self):
+        # find the halos that are the pov hosts, create spheres
+        return
+    
+    def showOrigin(self, org_size = 0.2):
+        # marker color changes with
+        return super().showOrigin(org_size)
+
+    def showHostArrows(self):
+        return
+    
 class MultiView(Scene):
     """
     For scenes that involve following multiple halos. This is usually intended to 
@@ -633,8 +711,8 @@ class HostSub(Scene):
         for h in self.sys.halos:
             anim_slc = slice(self.start, self.stop)
             alv = h.getAlive()[anim_slc]
-            fid_pids = h.getField(self.fid_pid)[anim_slc]
-            alt_pids = h.getField(self.alt_pid)[anim_slc]
+            fid_pids = h.getField(fid_key)[anim_slc]
+            alt_pids = h.getField(alt_key)[anim_slc]
             
             snaps = np.arange(self.start, self.stop)
             relevant_snaps = snaps[alv]
@@ -694,7 +772,7 @@ class HostSub(Scene):
                     # Add a Marker instead of a Line
                     m = Marker(h, snap=seg_snap)
                     m.setColor(style[gn.COLOR])
-                    m.setSize(self.sys._getDefaultPointSize())
+                    m.setSize(self._getDefaultPointSize())
                     m.setShape('sphere')
                     m.setName(f"marker_{h.hid}_{seg_snap}")
                     self.addGraphic(m)

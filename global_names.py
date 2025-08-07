@@ -32,7 +32,7 @@ SHAPE = 'shape'
 LABEL = 'label'
 TIPSIZE = 'tipsize'
 SHOW_POINTS = 'show_points'
-
+LIGHTING = 'lighting'
 # other graphics constants
 START = 'start'
 STOP = 'stop'
