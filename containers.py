@@ -1,7 +1,8 @@
 import numpy as np
+from numpy.linalg import eigh, norm
 import global_names as gn
-from typing import List, Tuple, Union
-
+from typing import List, Tuple
+import warnings
 class Event:
     """
     stores info about some event that happens to halo. Often particular kinds
@@ -97,7 +98,7 @@ class Halo:
     """
     def __init__(self, hid, pos, redshift, **opt_fields):
         self.hid = hid
-        self.pos = np.asarray(pos)
+        self.pos = np.asarray(pos) # positions are expected to be comoving
         if len(self.pos.shape) != 2 or self.pos.shape[1] != 3:
             raise ValueError(f"position needs to have shape (n, 3), has {self.pos.shape}")
         self.z = redshift
@@ -152,16 +153,27 @@ class Halo:
         return self.events
     
     def _getRange(self, snap_slc = None) -> Tuple[np.ndarray, np.ndarray]:
-        if snap_slc is None:
-            snap_slc = self.getAlive()
-        mins = self.pos[snap_slc, :].min(axis = 0)
-        maxs = self.pos[snap_slc, :].max(axis = 0)
+        alv = self.getAlive()
+        if snap_slc is not None:
+            snap_mask = np.zeros_like(alv, dtype = bool)
+            snap_mask[snap_slc] = True
+            mask = snap_mask & alv
+        else:
+            mask = alv
+        pos = self.getPhyPos()
+        mins = pos[mask, :].min(axis = 0)
+        maxs = pos[mask, :].max(axis = 0)
         
         if self.hasField(gn.RADIUS):
             max_r = np.max(self.radius[snap_slc])
             return mins - max_r, maxs + max_r
         return mins, maxs
     # --- Property Accessors for Common Fields --- #
+    def getComPos(self):
+        return self.pos
+    
+    def getPhyPos(self):
+        return self.pos / (1 + self.z[:, np.newaxis])
     
     @property
     def radius(self):
@@ -193,41 +205,48 @@ class Halo:
     @property
     def status(self):
         return self.getField(gn.STATUS)
-    
+
+
+
 class System:
     """
     A class that handles how halos interface within a particular system
     """
     def __init__(self, halo_list : List[Halo], boxsize : float):
         self.halos = halo_list
-        self.hids = np.zeros(len(halo_list), dtype = int)
-        for i,h in enumerate(self.halos):
-            self.hids[i] = h.hid
-        self.boxsize = boxsize # should match radius units, namely physical kpc (at z = 0)
+        self.hids = np.array([h.hid for h in self.halos], dtype=int)
+        self.boxsize = boxsize  # comoving
+        self._rmPBC()           # unwrap + align once at construction
         return
     
+    # ---------- GETTERS ----------
+
+    
     def getHalo(self, hid) -> Halo:
-        if not hid in self.hids:
+        if hid not in self.hids:
             raise ValueError(f"{hid} not found in system.")
-        idx = np.where(self.hids == hid)[0][0]
+        idx = int(np.where(self.hids == hid)[0][0])
         return self.halos[idx]
     
+    def getID(self, idx) -> int:
+        return self.halos[idx].hid
+    
+    
+    # ---------- INTERNAL CONVENIENCE METHODS FOR SCENE CLASS  ----------
+
     def _checkKey(self, key_name):
         for h in self.sys.halos:
             if not h.hasField(key_name):
                 raise KeyError(f"halo {h.hid} does not have field {key_name}.") 
-
-
-    def getID(self, idx) -> int:
-        return self.halos[idx].hid
     
-    def createDeathEvents(self):
+    def _createDeathEvents(self, last_snap = -1):
         for h in self.halos:
-            evt = Death(h._last - 1, f'death_{h.hid}') # _last is exclusive
-            h.addEvent(evt)
+            if h._last != last_snap:
+                evt = Death(h._last - 1, f'death_{h.hid}') # _last is exclusive
+                h.addEvent(evt)
         return
     
-    def getRange(self, start = 0, stop = -1) -> Tuple[np.ndarray, np.ndarray]:
+    def _getRange(self, start = 0, stop = -1) -> Tuple[np.ndarray, np.ndarray]:
         """
         Return the overall axis‐aligned bounding box ([mins], [maxs]) in x,y,z
         that encloses all halos (including their radii, if present).
@@ -236,60 +255,180 @@ class System:
             raise Exception("Cannot calculate view box without halos.")
         mins = np.full(3, np.inf)
         maxs = np.full(3, -np.inf)
+        if stop == -1:
+            snap_slc = slice
         snap_slc = slice(start, stop)
         for h in self.halos:
             hmins, hmaxs = h._getRange(snap_slc)
             mins = np.minimum(mins, hmins)
             maxs = np.maximum(maxs, hmaxs)
         return mins, maxs
+
+    def _findOptAxis(self):
+        """
+        Find the data-driven orthonormal axes that capture the most positional 
+        variance among *all* halos.
+
+        Returns
+        -------
+        tuple[np.ndarray, np.ndarray]
+            (viewDir, viewUp)  – 3-vectors, already unit-normalised
+            * viewDir : axis of **least** variance (3rd PC).  Point the camera
+              along -viewDir so the screen plane shows maximal spread.
+            * viewUp  : axis of **greatest** variance (1st PC).  Aligns the
+              screen’s Y-direction with the direction of biggest motion.
+        """
+        # 1. Collect every valid position from every halo
+        pos_chunks = []
+        for halo in self.halos:
+            pos_chunks.append(halo.getPhyPos()[halo.getAlive()])
+
+        if not pos_chunks:
+            raise RuntimeError("System has no positions to analyze")
+
+        pts = np.concatenate(pos_chunks, axis=0)
+        pts -= pts.mean(axis=0)            # centre on the mean
+
+        # 2. PCA via covariance eigen-decomposition
+        cov = np.cov(pts, rowvar=False)
+        w, v = eigh(cov)                   # v columns are eigenvectors
+        order = w.argsort()[::-1]          # descending variance
+        v = v[:, order]
+
+        # 3. Return the principal axes, normalised
+        axis1 = v[:, 0] / norm(v[:, 0])    # most variance
+        axis2 = v[:, 1] / norm(v[:, 1])    # second most
+        axis3 = v[:, 2] / norm(v[:, 2])    # least variance
+
+        return axis3, axis1               # (viewDir, viewUp)
     
+    
+    # ---------- INTERNAL METHODS FOR HANDLING PERIODIC BOUNDARIES ----------
+    
+    def _Lvec(self) -> np.ndarray:
+        L = np.asarray(self.boxsize, dtype=float)
+        return np.array([L, L, L], dtype=float) if L.ndim == 0 else L
+
+    def _alive_median(self, pos: np.ndarray, alive: np.ndarray) -> np.ndarray:
+        """Median of positions over alive frames (3-vector)."""
+        if not np.any(alive):
+            return np.array([np.nan, np.nan, np.nan], dtype=float)
+        return np.median(pos[alive, :], axis=0)
+
+    def _unwrap_positions(self, pos: np.ndarray, alive: np.ndarray) -> np.ndarray:
+        """
+        Unwrap (T,3) trajectory into a continuous path using minimal-image increments
+        across alive frames. Non-alive frames are left as NaN.
+        Assumes per-frame displacement < ~boxsize/2 along each axis.
+        """
+        pos = np.asarray(pos, dtype=float)
+        L = self._Lvec()
+
+        out = np.full_like(pos, np.nan)
+        prev = None
+        for t in range(pos.shape[0]):
+            if not alive[t]:
+                prev = None
+                continue
+            if prev is None:
+                out[t] = pos[t]
+            else:
+                d = pos[t] - pos[prev]
+                # minimal-image increment (handles multi-box via nearest integer)
+                d -= np.round(d / L) * L
+                out[t] = out[prev] + d
+            prev = t
+        return out
+
+    def _rmPBC(self):
+        """
+        1) Unwrap every halo in time so trajectories are continuous.
+        2) Apply a single integer box shift (per halo) so the *system* is in one image,
+           i.e., halos are not split across opposite sides (if feasible).
+        3) If the resulting system span exceeds L/2 on any axis, warn and continue.
+        """
+        if not self.halos:
+            return
+
+        L = self._Lvec()
+
+        # 1) Unwrap each halo's trajectory
+        for h in self.halos:
+            alive = h.getAlive()
+            h.pos = self._unwrap_positions(h.pos, alive)
+
+        # 2) Single-image alignment across halos
+        # Use the first halo with any alive frames as reference
+        ref_idx = next((i for i, h in enumerate(self.halos) if np.any(h.getAlive())), None)
+        if ref_idx is None:
+            return  # nothing alive
+        ref = self.halos[ref_idx]
+        ref_ctr = self._alive_median(ref.pos, ref.getAlive())
+
+        # For every halo, choose an integer shift so its median is closest to ref median
+        for h in self.halos:
+            alive = h.getAlive()
+            if not np.any(alive):
+                continue
+            ctr = self._alive_median(h.pos, alive)
+            # integer image index (3-vector)
+            n = np.round((ctr - ref_ctr) / L)
+            # shift entire (unwrapped) trajectory by -n*L
+            h.pos = h.pos - n * L
+
+        # 3) Check span; warn if any axis > L/2
+        # Span computed over all halos & alive frames
+        mins = np.array([ np.inf,  np.inf,  np.inf], dtype=float)
+        maxs = np.array([-np.inf, -np.inf, -np.inf], dtype=float)
+        for h in self.halos:
+            alive = h.getAlive()
+            if np.any(alive):
+                p = h.pos[alive]
+                mins = np.minimum(mins, np.min(p, axis=0))
+                maxs = np.maximum(maxs, np.max(p, axis=0))
+        span = maxs - mins
+        if np.any(span > 0.5 * L + 1e-9):
+            warnings.warn(
+                "System spans more than half the box along at least one axis "
+                f"(span={span}, box={L}). Keeping unwrapped coordinates; "
+                "views may show a large cosmological volume with PBC context."
+            )
+
+
+    # ---------- Origin setters ----------
 
     def setCoMOrigin(self):
         """
         Shift all positions so the center of mass at each snapshot is at the origin,
-        using only alive halos for each snapshot.
+        using only alive halos for each snapshot. No periodic wrapping expected.
         """
         nsnaps = self.halos[0].pos.shape[0]
-        nhalos = len(self.halos)
-        boxsize = self.boxsize
-
-        # Collect positions and masses
-        all_pos = np.array([h.pos for h in self.halos])  # shape (nhalos, nsnaps, 3)
-        all_mass = np.array([h.mass for h in self.halos])  # shape (nhalos, nsnaps)
-
-        # Mask: halos alive per snapshot (nhalos, nsnaps)
-        all_alive = np.array([h.getAlive() for h in self.halos])  # (nhalos, nsnaps)
+        all_pos  = np.array([h.pos  for h in self.halos])   # (H, T, 3)
+        all_mass = np.array([h.mass for h in self.halos])   # (H, T)
+        all_alive = np.array([h.getAlive() for h in self.halos])  # (H, T)
 
         for s in range(nsnaps):
-            # Only use halos alive at this snapshot
             alive_mask = all_alive[:, s]
             if not np.any(alive_mask):
-                continue  # skip if no halos alive
-
-            pos_s = all_pos[alive_mask, s, :]      # (Nalive, 3)
-            mass_s = all_mass[alive_mask, s]       # (Nalive,)
-
-            # Use periodic wrapping for CoM calculation
-            # Shift all to origin, then compute mean position
-            ref = pos_s[0]  # anchor to first alive halo
-            dpos = self._wrapPeriodic(pos_s - ref)
-            com_offset = (np.sum(mass_s[:, None] * dpos, axis=0) / np.sum(mass_s))
-            com = self._wrapPeriodic(ref + com_offset)
-
-            # Now subtract com from every halo's position
-            for i, h in enumerate(self.halos):
-                # Only shift if alive
-                if all_alive[i, s]:
-                    h.pos[s] = self._wrapPeriodic(h.pos[s] - com)
+                continue
+            pos_s  = all_pos[alive_mask, s, :]            # (N, 3)
+            mass_s = all_mass[alive_mask, s][:, None]     # (N, 1)
+            com = (mass_s * pos_s).sum(axis=0) / mass_s.sum()
+            # subtract COM from every alive halo at s
+            k = 0
+            for h in self.halos:
+                if all_alive[k, s]:
+                    h.pos[s] = h.pos[s] - com
+                k += 1
 
     def setCustomOrigin(self, orig_pos):
         """
         Shift all positions so orig_pos is at the origin.
         orig_pos can be shape (nsnaps, 3) or (3,) for static origin.
+        No wrapping; PBC presumed handled already.
         """
         nsnaps = self.halos[0].pos.shape[0]
-
-        orig_pos = np.asarray(orig_pos)
+        orig_pos = np.asarray(orig_pos, dtype=float)
         if orig_pos.shape == (3,):
             orig_pos = np.broadcast_to(orig_pos, (nsnaps, 3))
         elif orig_pos.shape != (nsnaps, 3):
@@ -297,29 +436,21 @@ class System:
 
         for h in self.halos:
             alive = h.getAlive()
-            h.pos[alive, :] = self._wrapPeriodic(h.pos[alive, :] - orig_pos[alive, :])
+            h.pos[alive, :] = h.pos[alive, :] - orig_pos[alive, :]
 
     def setHaloOrigin(self, halo_id):
         """
-        Shift all positions so the halo with given ID is at the origin (for each snapshot).
+        Shift all positions so the halo with given ID sits at the origin (per snapshot).
+        Assumes all trajectories are already continuous (PBCs removed).
         """
         idxs = np.where(self.hids == halo_id)[0]
         if len(idxs) == 0:
             raise ValueError(f"Host halo ID {halo_id} not found")
         host = self.halos[idxs[0]]
 
-        host_pos = host.pos.copy()
+        host_pos   = host.pos.copy()
         host_alive = host.getAlive()
 
         for h in self.halos:
-            alive = h.getAlive() & host_alive
-            h.pos[alive, :] = self._wrapPeriodic(h.pos[alive, :] - host_pos[alive, :])
-
-
-    def _wrapPeriodic(self, delta):
-        """
-        Adjust position differences to respect periodic boundaries.
-        """
-        bs = self.boxsize
-        return (delta + 0.5 * bs) % bs - 0.5 * bs
-    
+            both = h.getAlive() & host_alive
+            h.pos[both, :] = h.pos[both, :] - host_pos[both, :]

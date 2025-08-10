@@ -65,8 +65,17 @@ class Graphic:
     def _doDisplay(self, snap)-> bool:
         if self.disp_start is None or self.disp_stop is None:
             raise ValueError(f"display timesteps not set for graphic {self.name}")
-        return (snap >= self.disp_start) and (snap <= self.disp_stop)
+        doDisplay = (snap >= self.disp_start) and (snap <= self.disp_stop)
+
+        return doDisplay
     
+    def _writeEmptyVTP(self, outdir, snap):
+        out = pv.PolyData()
+        name = self.getVTPName(snap)
+        fname = os.path.join(outdir, name)
+        out.save(fname)
+        return fname
+        
     def setLabel(self, label: str):
         """Set the label for the graphic."""
         if not isinstance(label, str):
@@ -114,7 +123,8 @@ class Graphic:
         maxs = np.asarray(maxs, dtype=float)
 
         # Boolean mask: True where the position is inside the box for *all* axes
-        in_box = np.all((self.halo.pos >= mins) & (self.halo.pos <= maxs), axis=1)
+        pos = self.halo.getPhyPos()
+        in_box = np.all((pos >= mins) & (pos <= maxs), axis=1)
 
         # Find the first True; np.flatnonzero avoids the 0-when-all-False pitfall
         hits = np.flatnonzero(in_box)
@@ -176,15 +186,17 @@ class Sphere(Graphic):
     
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
         radius = self.halo.radius
-        position = self.halo.pos
+        position = self.halo.getPhyPos()
         
         fnames = []
         tstep = []
         for isnap in range(start, stop):
             if not self._doDisplay(isnap):
+                fname = self._writeEmptyVTP(out_dir, isnap)
+                fnames.append(fname)
+                tstep.append(isnap)
                 continue
             # Create sphere mesh in pyvista
-
             if radius[isnap] < 0:
                 raise ValueError(f"halo {self.halo.hid} has invalid radius at snap {isnap}")
             sphere = pv.Sphere(radius=radius[isnap], center=position[isnap], theta_resolution=32, phi_resolution=32)
@@ -217,15 +229,17 @@ class Marker(Graphic):
 
     def writeVTP(self, out_dir, start, stop):
 
-        pos = self.halo.pos
+        pos = self.halo.getPhyPos()
         fnames, tsteps = [], []
         center = pos[self.event.getSnap()]
         shape = self.styles.get(gn.SHAPE, 'sphere')
         size = self.styles.get(gn.SIZE, 1)
         for isnap in range(start, stop):
             if not self._doDisplay(isnap):
-                continue  # no marker before the event
-            # Marker stays at the event location after it occurs:
+                fname = self._writeEmptyVTP(out_dir, isnap)
+                fnames.append(fname)
+                tsteps.append(isnap)            # Marker stays at the event location after it occurs
+                continue
 
             # Create geometry based on shape
             if shape == 'sphere':
@@ -291,18 +305,23 @@ class Line(Graphic):
         For each snapshot in [start, stop), write a VTP file showing
         the trajectory up to and including that snapshot.
         """
-        pos = self.halo.pos
+        pos = self.halo.getPhyPos()
         fnames = []
         tstep = []
         for isnap in range(start, stop):
             if not self._doDisplay(isnap):
+                fname = self._writeEmptyVTP(out_dir, isnap)
+                fnames.append(fname)
+                tstep.append(isnap)
                 continue
 
             # should be able to assume that slice is within halos livetime
             end = min(isnap + 1, self.tjy_stop)
             traj_points = pos[self.tjy_start:end]
             if traj_points.shape[0] < 2:
-                continue  # Need at least 2 points for a line
+                fname = self._writeEmptyVTP(out_dir, isnap)
+                fnames.append(fname)
+                tstep.append(isnap)
             # PyVista expects a lines array like [n_points, 0, 1, ..., n-1]
             pdata = pv.PolyData(traj_points)
             pdata.lines = np.hstack([[traj_points.shape[0]], np.arange(traj_points.shape[0])])
@@ -348,8 +367,10 @@ class Arrow(Graphic):
         maxs = np.asarray(maxs, dtype=float)
 
         # Boolean mask: True where the position is inside the box for *all* axes
-        to_in_box = np.all((self.halo_to.pos >= mins) & (self.halo_to.pos <= maxs), axis=1)
-        from_in_box = np.all((self.halo_from.pos >= mins) & (self.halo_from.pos <= maxs), axis=1)
+        to_pos = self.halo_to.getPhyPos()
+        from_pos = self.halo_from.getPhyPos()
+        to_in_box = np.all((to_pos >= mins) & (to_pos <= maxs), axis=1)
+        from_in_box = np.all((from_pos >= mins) & (from_pos <= maxs), axis=1)
         in_box = to_in_box & from_in_box
         # Find the first True; np.flatnonzero avoids the 0-when-all-False pitfall
         hits = np.flatnonzero(in_box)
@@ -359,7 +380,7 @@ class Arrow(Graphic):
             self.disp_start = np.inf # never display
 
     def writeVTP(self, out_dir, start, stop):
-        posA = self.halo_from.pos; posB = self.halo_to.pos
+        posA = self.halo_from.getPhyPos(); posB = self.halo_to.getPhyPos()
         fnames, tsteps = [], []
         # Determine tip and shaft sizes from styles or defaults
         tip_frac = self.styles.get(gn.TIPSIZE, 0.25)  # fraction of length for arrow tip
@@ -369,12 +390,17 @@ class Arrow(Graphic):
             base_tip_radius *= lw
             base_shaft_radius *= lw
         for isnap in range(start, stop):
-            if not self._doDisplay(isnap): # throws error if disp snaps not defined
+            if not self._doDisplay(out_dir, isnap): # throws error if disp snaps not defined
+                fname = self._writeEmptyVTP(isnap)
+                fnames.append(fname)
+                tsteps.append(isnap)
                 continue
             start_pt = posA[isnap]; end_pt = posB[isnap]
             direction = end_pt - start_pt
             if np.linalg.norm(direction) == 0:
-                continue  # skip if positions coincide (degenerate arrow)
+                fname = self._writeEmptyVTP(isnap)
+                fnames.append(fname)
+                tsteps.append(isnap)
             # Create arrow mesh from start_pt to end_pt
             arrow_mesh = pv.Arrow(start=start_pt, direction=direction, 
                                 tip_length=tip_frac, 

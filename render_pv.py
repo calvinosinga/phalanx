@@ -1,8 +1,7 @@
 import os
-
 import global_names as gn
-
-
+import glob
+import numpy as np
 def main(scene_dir, verbose = 1):
     import paraview.simple as pvs
     import xml.etree.ElementTree as ET
@@ -27,9 +26,13 @@ def main(scene_dir, verbose = 1):
         # 4) Line width & style (for line/trajectory objects)
         if gn.LWIDTH in styles:
             rep.LineWidth = styles[gn.LWIDTH]
+
         if gn.LSTYLE in styles:
             # ParaView expects e.g. "Solid", "Dashed", "Dotted"
-            rep.LineStyle = styles[gn.LSTYLE].capitalize()
+            try:
+                rep.LineStyle = styles[gn.LSTYLE].capitalize()
+            except Exception:
+                pass
 
         # 5) Turn on/off rendering points as little spheres
         if gn.SHOW_POINTS in styles:
@@ -48,8 +51,11 @@ def main(scene_dir, verbose = 1):
     with open(os.path.join(vtp_dir, "style.json")) as f:
         styles = json.load(f)
 
-    pvs._DisableFirstRenderCameraReset()
+    if verbose:
+        print("adjusting camera...")
+    
     view = pvs.GetActiveViewOrCreate('RenderView')
+    pvs._DisableFirstRenderCameraReset()
     scene_style = styles.get(gn.SCENE_KEY, {})
     if gn.BACKGROUND_COLOR in scene_style:
         view.BackgroundColorMode = 'Single Color'
@@ -72,75 +78,92 @@ def main(scene_dir, verbose = 1):
         size = list(scene_style[gn.VIEW_SIZE])
         smax = max(size[0], size[1])
         size[0] /= smax; size[1] /= smax
-        view.ViewSize = [int(size[0] * 1024), int(size[1] * 1024)]
-    if verbose:
-        print("loading pvd...")
-    tree = ET.parse(vtp_dir + 'scene.pvd')
-    root = tree.getroot()
-    collection = root.find('Collection')
+        # make sure the width and height are even numbers for ffmpeg
+        width = round(size[0] * 1024)
+        height = round(size[1] * 1024)
+        width = width if (width % 2 == 0) else width + 1
+        height = height if (height % 2 == 0) else height + 1
+        view.ViewSize = [width, height]
+    view.OrientationAxesVisibility = 0
+
 
     if verbose:
-        print("creating groups...")
-    groups = {}
-    for ds in collection.findall('DataSet'):
-        grp = ds.get('group')
+        print('loading pvds...')
+
+    # load all pvd files in vtp_dir (use glob to find them)
+    pvd_paths = sorted(glob.glob(os.path.join(vtp_dir, "*.pvd")))
+
+    if not pvd_paths:
+        raise FileNotFoundError(f"No PVD files found in {vtp_dir}")
+    
+    if verbose:
+        print("creating graphics...")
+    
+    readers = []
+    for ppath in pvd_paths:
+        # load pvd file
+        tree = ET.parse(ppath)
+        root = tree.getroot()
+        collection = root.find('Collection')
+        # there should only be one dataset in each pvd file (does this work?)
+        ds = collection.findall('DataSet')
+        # the groupname should match a key in the styles json
+        grp = ds[0].get('group')
+
         if grp not in styles:
             msg = f'{grp} not found in styles json, {list(styles.keys())}'
             raise ValueError(msg)
-        bname = ds.get('file')
-        fullpath = os.path.join(vtp_dir, bname)
-        groups.setdefault(grp, []).append(fullpath)
+        
+        if not grp:
+            raise ValueError(f"no group found for {ppath}, cannot locate styles")
+        # create rep
+        reader = pvs.PVDReader(FileName = ppath)
+        pvs.RenameSource(grp, reader)
+        disp = pvs.Show(reader, view)
+        pvs.UpdatePipeline(proxy = reader)
 
+        _applyStyles(disp, styles[grp])
 
-    # anim_scene = pvs.GetAnimationScene()
-    # anim_scene.UpdateAnimationUsingDataTimeSteps()
-    # if verbose:
-    #     print("rendering...")
-    # pvs.Render()
-    # if verbose:
-    #     print("saving state...")
-    # pvs.SaveState(os.path.join(scene_dir, "scene.pvsm"))
-    frames_dir = os.path.join(scene_dir, 'frames/')
-    os.makedirs(frames_dir, exist_ok=True)
+        readers.append(reader)
+
+    # # Decide timesteps to render
+    # tsteps = sorted(all_times)
+    
+    # start = styles[gn.SCENE_KEY][gn.START]
+    # stop  = styles[gn.SCENE_KEY][gn.STOP]
+
+    # tsteps = np.arange(start, stop)
+
+    anim_scene = pvs.GetAnimationScene()
+    anim_scene.UpdateAnimationUsingDataTimeSteps()
+    tk = pvs.GetTimeKeeper()
+    tsteps = list(getattr(tk, "TimestepValues", []))
+
     if verbose:
-        print(f"frames saved in {frames_dir}")
-    # # before your manual loop, print out what the reader *knows* about its timesteps:
-    # for name, reader in readers.items():
-    #     print(f"{name!r} reader.TimestepValues = {reader.TimestepValues}")
-    tstart = int(styles[gn.SCENE_KEY][gn.START])
-    tstop = int(styles[gn.SCENE_KEY][gn.STOP])
-    frame_count = 0
-    for t in range(tstart, tstop):
-        if verbose:
-            print(f"\tcreating snapshot {t}...")
-        created = []
-        for name in groups:
-            # build the exact filename for this time (e.g. line_1061_0005.vtp)
-            fname = os.path.join(vtp_dir, f"{name}_{int(t):04d}.vtp")
-            if not os.path.isfile(fname):
-                continue
+        print(f"Rendering {len(tsteps)} frames...")
 
-            # create a fresh reader for this one file
-            reader = pvs.XMLPolyDataReader(FileName=[fname])
-            reader.UpdatePipeline()
+    # Prepare frames dir
+    frames_dir = os.path.join(scene_dir, 'frames')
+    os.makedirs(frames_dir, exist_ok=True)
+    
+    for i, t in enumerate(tsteps):
+        tk.Time = float(t)
 
-            # show it and style it
-            rep = pvs.Show(reader, view)
-            rep.Visibility = 1
-            _applyStyles(rep, styles[name])
+        pvs.Render(view = view)
+        out_png = os.path.join(frames_dir, f"frame_{i:04d}.png")
+        pvs.SaveScreenshot(out_png, viewOrLayout = view, ImageResolution=view.ViewSize)
 
-            # keep track for cleanup
-            created.extend([reader, rep])
-        
-        pvs.Render()
-        shot_path = os.path.join(frames_dir, f'frame_{frame_count:04d}.png')
-        pvs.SaveScreenshot(shot_path, view)
-        frame_count += 1
-        for proxy in created:
-            pvs.Delete(proxy)
-        
+    if verbose:
+        print("saving state to pvsm")
+    
+    pvsm_path = os.path.join(scene_dir, "scene.pvsm")
+
+    # save the state to scene_dir
+    pvs.SaveState(pvsm_path)
 
     return
+
+
 
 
 def render(scene_dir, fps, cleanup_frames = True, verbose = 1):

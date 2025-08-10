@@ -13,7 +13,7 @@ class Scene:
     def __init__(self, system : System) -> None:
         if len(system.halos) < 1:
             raise ValueError("system has no halos, nothing to show")
-        self.sys = system
+        self.sys = copy.deepcopy(system)
         self.graphics : List[Graphic] = []
         self.start = 0
         self.stop = len(self.sys.halos[0].pos)  # exclusive
@@ -123,47 +123,47 @@ class Scene:
             raise ValueError("View size must be tuple/list of 2 numbers.")
 
     def getViewBox(self): # we default to using system's view box
-        return self.sys.getRange(self.start, self.stop)
+        return self.sys._getRange(self.start, self.stop)
 
     def autoCam(self, padding_frac: float = 0.05) -> None:
         """
-        Automatically set a static parallel‐projection camera so that all
-        halos in the system just fit in view with a bit of padding.
-
-        Args:
-        padding_frac (float): fraction of the max span to pad on each side.
+        Pick a camera whose screen plane is spanned by the two PCA axes of
+        greatest variance and that tightly encloses every halo, with padding.
         """
-        # get bounding box of all halos
-        mins, maxs = self.getViewBox()
+        # 1) Data-driven axes ---------------------------------------------------
+        viewDir, viewUp = self.sys._findOptAxis()        # unit vectors
+        right   = np.cross(viewUp, viewDir)              # second in-plane axis
+
+        # 2) Gather the eight AABB corners ------------------------------------
+        mins, maxs = self.getViewBox()                   # world-axis AABB
+        corners = np.array([[x, y, z]                    # 8 combinations
+                            for x in (mins[0], maxs[0])
+                            for y in (mins[1], maxs[1])
+                            for z in (mins[2], maxs[2])])
+
         center = (mins + maxs) / 2.0
-        spans = maxs - mins            # [dx, dy, dz]
-        # rank axes by span: [smallest, middle, largest]
-        small_ax, mid_ax, large_ax = np.argsort(spans)
+        pad    = padding_frac * (maxs - mins).max()
 
-        # view direction ≡ +unit on the smallest‐span axis
-        view_normal = np.zeros(3)
-        view_normal[small_ax] = 1.0
-        # up vector ≡ +unit on the middle‐span axis
-        view_up = np.zeros(3)
-        view_up[mid_ax] = 1.0
+        # 3) Project the corners into the new camera basis --------------------
+        # screen plane axes: right (X), viewUp (Y)
+        proj_2d = (corners - center) @ np.vstack([right, viewUp]).T  # (8×2)
+        width, height = proj_2d.ptp(axis=0)               # extents in plane
+        width  += 2 * pad
+        height += 2 * pad
+        parallel_scale = height / 2.0                     # ParaView definition
 
-        # padding in world‐units
-        pad = padding_frac * spans.max()
-        width  = spans[large_ax] + 2 * pad
-        height = spans[mid_ax]   + 2 * pad
+        # depth along viewDir to avoid near-plane clipping
+        depth_extent = np.dot(corners - center, viewDir).ptp()
+        distance     = depth_extent / 2.0 + pad
+        cam_pos      = center + viewDir * distance        # absolute 3-vector
 
-        # parallel scale is half the vertical extent
-        parallel_scale = height / 2.0
-        # camera position: just outside the box along view_normal
-        distance = spans[small_ax] / 2.0 + pad
-        cam_pos = center + view_normal * distance
-
-        # apply to render_props
-        self.setCameraFocusPoint(tuple(center.tolist()))
-        self.setCameraPosition(tuple(cam_pos.tolist()))
-        self.setCameraViewUp(tuple(view_up.tolist()))
+        # 4) Commit camera & view size ----------------------------------------
+        self.setCameraFocusPoint(tuple(center))
+        self.setCameraPosition(tuple(cam_pos))
+        self.setCameraViewUp(tuple(viewUp))
         self.setCameraParallelScale(parallel_scale)
         self.setViewSize((width, height))
+
     
 
     # --- Phase 2 (Graphic creation/manipulation) ---
@@ -181,9 +181,10 @@ class Scene:
             for ev in events:
                 m = Marker(h, ev)
                 ds = ev.def_style
-                m.setColor(ds[gn.COLOR])
-                m.setLabel(ds[gn.LABEL])
-                m.setShape(ds[gn.SHAPE])
+                m.setStyle(ev.def_style)
+                # m.setColor(ds[gn.COLOR])
+                # m.setLabel(ds[gn.LABEL])
+                # m.setShape(ds[gn.SHAPE])
                 if gn.SIZE not in ds:
                     m.setSize(self._getDefaultPointSize())
                 else:
@@ -200,13 +201,13 @@ class Scene:
         # default: only show tjy when halo exists, but keep path until anim ends
         traj.setDisplaySnaps(halo._first, self.stop) 
         # default: label is ID
-        traj.setLabel(str(halo_id))
+        traj.setLabel(str(halo.hid))
         return traj
     
     def makeSphere(self, halo_id) -> Sphere:
         halo = self.sys.getHalo(halo_id)
         sphere = Sphere(halo)
-        sphere.setLabel(str(halo_id))
+        sphere.setLabel(str(halo.hid))
         return sphere
     
 
@@ -233,7 +234,7 @@ class Scene:
         return arr_list
     
     def createDeathEvents(self):
-        self.sys.createDeathEvents()
+        self.sys._createDeathEvents(self.stop)
     
     def _getDefaultPointSize(self):
         mins, maxs = self.getViewBox()

@@ -10,8 +10,8 @@ def makeHalo(sminterface, halo_id, default_position = 'x_spa') -> Halo:
     halo_data = sminterface.getCat(ogid)
     pos = halo_data[default_position][:,:]
     pos = np.squeeze(pos)
-    # by default, pos is in cMpc/h. convert to physical kpc / h (agrees with tracers)
-    pos = pos * 1e3 / (1 + sminterface.s['simulation']['snap_z'][:, np.newaxis])
+    # by default, pos is in cMpc/h. convert to comoving kpc / h
+    pos = pos * 1e3
     halo = Halo(ogid, pos, sminterface.s['simulation']['snap_z'])
 
     return halo
