@@ -160,7 +160,7 @@ class Halo:
             mask = snap_mask & alv
         else:
             mask = alv
-        pos = self.getPhyPos()
+        pos = self.getPos()
         mins = pos[mask, :].min(axis = 0)
         maxs = pos[mask, :].max(axis = 0)
         
@@ -169,11 +169,9 @@ class Halo:
             return mins - max_r, maxs + max_r
         return mins, maxs
     # --- Property Accessors for Common Fields --- #
-    def getComPos(self):
+
+    def getPos(self):
         return self.pos
-    
-    def getPhyPos(self):
-        return self.pos / (1 + self.z[:, np.newaxis])
     
     @property
     def radius(self):
@@ -281,7 +279,7 @@ class System:
         # 1. Collect every valid position from every halo
         pos_chunks = []
         for halo in self.halos:
-            pos_chunks.append(halo.getPhyPos()[halo.getAlive()])
+            pos_chunks.append(halo.getPos()[halo.getAlive()])
 
         if not pos_chunks:
             raise RuntimeError("System has no positions to analyze")

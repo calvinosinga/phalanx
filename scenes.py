@@ -18,10 +18,12 @@ class Scene:
         self.start = 0
         self.stop = len(self.sys.halos[0].pos)  # exclusive
 
+        self.do_phy_pos = True
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
         self.setCameraParallelProjection(True) # almost always don't want perspective projection
         return
+
 
     # --- Phase 1: Scene Property Methods ---
     def setAnimSnap(self, start, stop):
@@ -562,7 +564,7 @@ class HostViewZoom(HostView):
         
         for gph in self.graphics:
             mins, maxs = self.getViewBox()
-            gph.showOnlyInView(mins, maxs)
+            gph._showOnlyInView(mins, maxs)
         return
                 
     def getViewBox(self):

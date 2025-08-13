@@ -26,6 +26,7 @@ class Graphic:
         self.disp_start = None
         self.disp_stop = None
         self.styles = {}
+        self.units = 'phy'
 
     def setName(self, name: str):
         if name in gn.INT_GRAPHIC_NAMES:
@@ -115,7 +116,7 @@ class Graphic:
         self.disp_stop = stop
         return
     
-    def showOnlyInView(self, mins, maxs):
+    def _showOnlyInView(self, mins, maxs):
         if not hasattr(self, 'halo'):
             raise NotImplementedError(f"showOnlyInView by default assumes halo attr, DNE in {self.__class__}")
         # Ensure NumPy arrays with shape (3,)
@@ -123,7 +124,9 @@ class Graphic:
         maxs = np.asarray(maxs, dtype=float)
 
         # Boolean mask: True where the position is inside the box for *all* axes
-        pos = self.halo.getPhyPos()
+        pos = self.halo.getPos()
+        if self.units == 'phy':
+            pos /= (1 + self.halo.z[:, np.newaxis])
         in_box = np.all((pos >= mins) & (pos <= maxs), axis=1)
 
         # Find the first True; np.flatnonzero avoids the 0-when-all-False pitfall
@@ -142,7 +145,15 @@ class Graphic:
         if not isinstance(opacity, (float, int)) or not (0 <= opacity <= 1):
             raise ValueError(f"Opacity must be a float between 0 and 1, got {opacity}")
         self.styles[gn.OPACITY] = float(opacity)
-        
+    
+    def setUnits(self, utype):
+        allowed_units = ['phy', 'com']
+        if utype in allowed_units:
+            self.units = utype
+        else:
+            raise ValueError(f"{utype} is not allowed unit type ({allowed_units}).")
+        return
+    
     """
     All the different start/stops can be a little confusing. Each graphic contains
     its own display start/stop that determines what timesteps we display that
@@ -185,8 +196,12 @@ class Sphere(Graphic):
         return
     
     def writeVTP(self, out_dir, start, stop)-> Tuple[List, List]:
-        radius = self.halo.radius
-        position = self.halo.getPhyPos()
+        if self.units == 'phy':
+            radius = self.halo.radius
+            position = self.halo.getPos() / (1 + self.halo.z[:, np.newaxis])
+        else: # comoving
+            radius = self.halo.radius * (1 + self.halo.z)
+            position = self.halo.getPos()
         
         fnames = []
         tstep = []
@@ -229,7 +244,9 @@ class Marker(Graphic):
 
     def writeVTP(self, out_dir, start, stop):
 
-        pos = self.halo.getPhyPos()
+        pos = self.halo.getPos()
+        if self.units == 'phy':
+            pos /= (1 + self.halo.z[:, np.newaxis])
         fnames, tsteps = [], []
         center = pos[self.event.getSnap()]
         shape = self.styles.get(gn.SHAPE, 'sphere')
@@ -305,7 +322,9 @@ class Line(Graphic):
         For each snapshot in [start, stop), write a VTP file showing
         the trajectory up to and including that snapshot.
         """
-        pos = self.halo.getPhyPos()
+        pos = self.halo.getPos()
+        if self.units == 'phy':
+            pos /= (1 + self.halo.z[:, np.newaxis])
         fnames = []
         tstep = []
         for isnap in range(start, stop):
@@ -360,15 +379,19 @@ class Arrow(Graphic):
         _check_positive_float(tipsize, "Tipsize")
         self.styles[gn.TIPSIZE] = float(tipsize)
 
-    def showOnlyInView(self, mins, maxs):
+    def _showOnlyInView(self, mins, maxs):
 
         # Ensure NumPy arrays with shape (3,)
         mins = np.asarray(mins, dtype=float)
         maxs = np.asarray(maxs, dtype=float)
 
         # Boolean mask: True where the position is inside the box for *all* axes
-        to_pos = self.halo_to.getPhyPos()
-        from_pos = self.halo_from.getPhyPos()
+        to_pos = self.halo_to.getPos()
+        if self.units == 'phy':
+            to_pos /= (1 + self.halo_to.z[:, np.newaxis])
+        from_pos = self.halo_from.getPos()
+        if self.units == 'phy':
+            from_pos /= (1 + self.halo_from.z[:, np.newaxis])
         to_in_box = np.all((to_pos >= mins) & (to_pos <= maxs), axis=1)
         from_in_box = np.all((from_pos >= mins) & (from_pos <= maxs), axis=1)
         in_box = to_in_box & from_in_box
@@ -380,7 +403,10 @@ class Arrow(Graphic):
             self.disp_start = np.inf # never display
 
     def writeVTP(self, out_dir, start, stop):
-        posA = self.halo_from.getPhyPos(); posB = self.halo_to.getPhyPos()
+        posA = self.halo_from.getPos(); posB = self.halo_to.getPos()
+        if self.units == 'phy':
+            posA /= (1 + self.halo_from.z[:, np.newaxis])
+            posB /= (1 + self.halo_to.z[:, np.newaxis])
         fnames, tsteps = [], []
         # Determine tip and shaft sizes from styles or defaults
         tip_frac = self.styles.get(gn.TIPSIZE, 0.25)  # fraction of length for arrow tip
