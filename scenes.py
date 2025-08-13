@@ -1,6 +1,6 @@
 from graphics import Graphic, Sphere, Line, Marker, Arrow
 from containers import Halo, System, Event
-from typing import Dict, List
+from typing import List
 import numpy as np
 import global_names as gn
 import copy
@@ -41,10 +41,13 @@ class Scene:
 
     def getSceneProps(self):
         rprops = copy.deepcopy(self.render_props)
-        # can I delete these?
         rprops['start'] = str(self.start)
         rprops['stop'] = str(self.stop)
-        rprops['nframes'] = str(self.stop - self.start + 1)
+        
+        # turn scene properties into lists
+        for k,v in rprops.items():
+            if isinstance(v, np.ndarray):
+                rprops[k] = v.tolist()
         return rprops
 
     def setProp(self, name, value):
@@ -61,49 +64,155 @@ class Scene:
         else:
             raise ValueError("Background color must be a tuple/list of 3 floats in [0,1].")
         return
+    
+    def setCameraPosition(self, pos: np.ndarray) -> None:
+        """
+        Accepts:
+          - static: np.ndarray of shape (3,), or list/tuple of length 3
+          - dynamic: np.ndarray of shape (N, 4) [[t, x, y, z], ...],
+                     or list of lists with 4 numbers each
+        Stores a NumPy array in render_props[gn.CAM_POS].
+        """
+        key = gn.CAM_POS
 
-    def setCameraPosition(self, pos):
-        """
-        Set camera position (x, y, z).
-        """
-        if (isinstance(pos, (tuple, list)) and len(pos) == 3 
-            and all(isinstance(x, (int, float)) for x in pos)):
-            self.render_props[gn.CAM_POS] = tuple(float(x) for x in pos)
+        if isinstance(pos, np.ndarray):
+            if pos.ndim == 1 and pos.shape == (3,):
+                arr = pos.astype(float, copy=False)
+            elif pos.ndim == 2 and pos.shape[1] == 4:
+                arr = pos.astype(float, copy=False)
+            else:
+                raise ValueError("Camera position ndarray must be shape (3,) or (N,4) for dynamic.")
+        elif isinstance(pos, (list, tuple)):
+            # list/tuple → prefer converting to ndarray
+            if len(pos) == 3 and all(isinstance(v, (int, float)) for v in pos):
+                arr = np.asarray(pos, dtype=float)
+            elif len(pos) > 0 and isinstance(pos[0], (list, tuple)):
+                if not all(len(e) == 4 and all(isinstance(v, (int, float)) for v in e) for e in pos):
+                    raise ValueError("Dynamic camera position must be [[t, x, y, z], ...].")
+                arr = np.asarray(pos, dtype=float)
+            else:
+                raise ValueError("Camera position must be (3,) or [[t, x, y, z], ...].")
         else:
-            raise ValueError("Camera position must be a tuple/list of 3 numbers.")
-        return
+            raise TypeError("Unsupported type for camera position.")
 
-    def setCameraFocusPoint(self, foc):
-        """
-        Set camera focal point (where the camera looks).
-        """
-        if (isinstance(foc, (tuple, list)) and len(foc) == 3 
-            and all(isinstance(x, (int, float)) for x in foc)):
-            self.render_props[gn.CAM_FOC] = tuple(float(x) for x in foc)
-        else:
-            raise ValueError("Camera focus point must be a tuple/list of 3 numbers.")
-        return
+        self.render_props[key] = arr
 
-    def setCameraViewUp(self, up):
+    def setCameraFocusPoint(self, foc: np.ndarray) -> None:
         """
-        Set camera view up direction (usually [0,0,1] or [0,1,0]).
+        static: (3,)
+        dynamic: (N,4) [[t, fx, fy, fz], ...]
         """
-        if (isinstance(up, (tuple, list)) and len(up) == 3 
-            and all(isinstance(x, (int, float)) for x in up)):
-            self.render_props[gn.CAM_UP] = tuple(float(x) for x in up)
-        else:
-            raise ValueError("Camera view up must be a tuple/list of 3 numbers.")
-        return
+        key = gn.CAM_FOC
 
-    def setCameraParallelScale(self, scale):
-        """
-        Set camera zoom (parallel scale, must be positive float).
-        """
-        if isinstance(scale, (int, float)) and scale > 0:
-            self.render_props[gn.CAM_ZOOM] = float(scale)
+        if isinstance(foc, np.ndarray):
+            if foc.ndim == 1 and foc.shape == (3,):
+                arr = foc.astype(float, copy=False)
+            elif foc.ndim == 2 and foc.shape[1] == 4:
+                arr = foc.astype(float, copy=False)
+            else:
+                raise ValueError("Camera focus ndarray must be shape (3,) or (N,4).")
+        elif isinstance(foc, (list, tuple)):
+            if len(foc) == 3 and all(isinstance(v, (int, float)) for v in foc):
+                arr = np.asarray(foc, dtype=float)
+            elif len(foc) > 0 and isinstance(foc[0], (list, tuple)):
+                if not all(len(e) == 4 and all(isinstance(v, (int, float)) for v in e) for e in foc):
+                    raise ValueError("Dynamic camera focus must be [[t, fx, fy, fz], ...].")
+                arr = np.asarray(foc, dtype=float)
+            else:
+                raise ValueError("Camera focus must be (3,) or [[t, fx, fy, fz], ...].")
         else:
-            raise ValueError("Camera parallel scale must be a positive number.")
-        return
+            raise TypeError("Unsupported type for camera focus.")
+
+        self.render_props[key] = arr
+
+    def setCameraViewUp(self, up : np.ndarray) -> None:
+        """
+        static: (3,)
+        dynamic: (N,4) [[t, ux, uy, uz], ...]
+        """
+        key = gn.CAM_UP
+
+        if isinstance(up, np.ndarray):
+            if up.ndim == 1 and up.shape == (3,):
+                arr = up.astype(float, copy=False)
+            elif up.ndim == 2 and up.shape[1] == 4:
+                arr = up.astype(float, copy=False)
+            else:
+                raise ValueError("Camera view-up ndarray must be shape (3,) or (N,4).")
+        elif isinstance(up, (list, tuple)):
+            if len(up) == 3 and all(isinstance(v, (int, float)) for v in up):
+                arr = np.asarray(up, dtype=float)
+            elif len(up) > 0 and isinstance(up[0], (list, tuple)):
+                if not all(len(e) == 4 and all(isinstance(v, (int, float)) for v in e) for e in up):
+                    raise ValueError("Dynamic camera view-up must be [[t, ux, uy, uz], ...].")
+                arr = np.asarray(up, dtype=float)
+            else:
+                raise ValueError("Camera view-up must be (3,) or [[t, ux, uy, uz], ...].")
+        else:
+            raise TypeError("Unsupported type for camera view-up.")
+
+        self.render_props[key] = arr
+
+    def setCameraParallelScale(self, scale: np.ndarray) -> None:
+        """
+        static: scalar or ndarray shape (1,)
+        dynamic: (N,2) [[t, scale], ...]
+        """
+        key = gn.CAM_ZOOM
+
+        if isinstance(scale, np.ndarray):
+            if scale.ndim == 0 or (scale.ndim == 1 and scale.size == 1):
+                arr = np.asarray(float(scale), dtype=float)
+            elif scale.ndim == 2 and scale.shape[1] == 2:
+                arr = scale.astype(float, copy=False)
+            else:
+                raise ValueError("Parallel scale ndarray must be scalar-like or shape (N,2).")
+        elif isinstance(scale, (int, float)):
+            arr = np.asarray(float(scale), dtype=float)
+        elif isinstance(scale, (list, tuple)):
+            if len(scale) > 0 and isinstance(scale[0], (list, tuple)):
+                if not all(len(e) == 2 and all(isinstance(v, (int, float)) for v in e) for e in scale):
+                    raise ValueError("Dynamic parallel scale must be [[t, scale], ...].")
+                arr = np.asarray(scale, dtype=float)
+            elif len(scale) == 1 and isinstance(scale[0], (int, float)):
+                arr = np.asarray(float(scale[0]), dtype=float)
+            else:
+                raise ValueError("Parallel scale must be scalar-like or [[t, scale], ...].")
+        else:
+            raise TypeError("Unsupported type for parallel scale.")
+
+        self.render_props[key] = arr
+
+    def setCameraViewAngle(self, angle: np.ndarray) -> None:
+        """
+        Note that this will almost always not be used - for parallel perspective, use the zoom feature
+        static: scalar or ndarray shape (1,)
+        dynamic: (N,2) [[t, view_angle_degrees], ...]
+        """
+        key = gn.CAM_ANGLE  # gn.CAM_ANGLE or "camera_view_angle"
+
+        if isinstance(angle, np.ndarray):
+            if angle.ndim == 0 or (angle.ndim == 1 and angle.size == 1):
+                arr = np.asarray(float(angle), dtype=float)
+            elif angle.ndim == 2 and angle.shape[1] == 2:
+                arr = angle.astype(float, copy=False)
+            else:
+                raise ValueError("View angle ndarray must be scalar-like or shape (N,2).")
+        elif isinstance(angle, (int, float)):
+            arr = np.asarray(float(angle), dtype=float)
+        elif isinstance(angle, (list, tuple)):
+            if len(angle) > 0 and isinstance(angle[0], (list, tuple)):
+                if not all(len(e) == 2 and all(isinstance(v, (int, float)) for v in e) for e in angle):
+                    raise ValueError("Dynamic view angle must be [[t, degrees], ...].")
+                arr = np.asarray(angle, dtype=float)
+            elif len(angle) == 1 and isinstance(angle[0], (int, float)):
+                arr = np.asarray(float(angle[0]), dtype=float)
+            else:
+                raise ValueError("View angle must be scalar-like or [[t, degrees], ...].")
+        else:
+            raise TypeError("Unsupported type for view angle.")
+
+        self.render_props[key] = arr
 
     def setCameraParallelProjection(self, flag):
         """
@@ -114,6 +223,16 @@ class Scene:
         else:
             raise ValueError("Camera parallel projection must be a boolean.")
         return
+    
+    def setInterpolation(self, interp_type: str, interp_step : int = 2) -> None:
+        """
+        Set interpolation mode used by camera keyframes in ParaView.
+        e.g., "Linear" (default), "Spline", "Step", etc.
+        """
+        if interp_type not in gn.ALLOWED_INTERP_TYPES:
+            raise ValueError(f"{interp_type} not in compatible interpolation types {gn.ALLOWED_INTERP_TYPES}")
+        self.render_props[gn.INTERP_TYPE] = interp_type
+        self.render_props[gn.INTERP_STEP] = str(interp_step)
 
     def setViewSize(self, size):
         if (isinstance(size, (tuple, list)) and len(size) == 2
@@ -273,6 +392,7 @@ class HostView(Scene):
 
         return
 
+    
     def hostBoundary(self):
         sphere = self.makeSphere(self.pov.hid)
         sphere.setOpacity(0.3)
@@ -451,7 +571,7 @@ class HostViewZoom(HostView):
         mins = np.array([-self.zoom_box_length]*3)
         maxs = np.array([self.zoom_box_length]*3)
         return mins, maxs
-
+    
 class TjyComp(HostView):
     """
     For scenes where we want to compare the trajectories of two instances of the
@@ -562,33 +682,28 @@ class TjyComp(HostView):
         raise NotImplementedError("function not defined in TjyComp")
         
 
-class SubhaloView(HostView):
 
-    def __init__(self, system, pov_id):
-        super().__init__(system, pov_id)
-
-    def hostBoundary(self):
-        # find the halos that are the pov hosts, create spheres
-        return
-    
-    def showOrigin(self, org_size = 0.2):
-        # marker color changes with
-        return super().showOrigin(org_size)
-
-    def showHostArrows(self):
-        return
     
 class MultiView(Scene):
     """
     For scenes that involve following multiple halos. This is usually intended to 
-    assess mergers of multi-level host-sub systems.
+    assess mergers or interactions between multi-level host-sub systems.
     """
     def __init__(self, system: System):
-        super().__init__(system) 
+        super().__init__(system)
+        self.sys.setCoMOrigin()
+        
 
-    
+class SubhaloView(MultiView):
+    """
+    Scene intended to understand relationships of a single subhalo and other halos in its hierarchy
+    """
 
-
+    def __init__(self, system : System, subhalo : int):
+        super().__init__(system)
+        
+    def e():
+        return
 class HostSub(Scene):
 
     def __init__(self, system: System, alt_upid, alt_pid):

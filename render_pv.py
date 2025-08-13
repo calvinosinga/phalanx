@@ -7,10 +7,12 @@ def main(scene_dir, verbose = 1):
     import xml.etree.ElementTree as ET
     import json
 
+    ##### HELPER FUNCTIONS ##########################
     def _applyStyles(rep, styles):
         """
         Reads style dict, applies to rep
         """
+        # TODO: in future, reads if the style is given as array, and creates/applies animation track.
         # 1) Color
         if gn.COLOR in styles:
             rep.DiffuseColor = styles[gn.COLOR]
@@ -47,48 +49,61 @@ def main(scene_dir, verbose = 1):
 
         return
     
-    vtp_dir = scene_dir + '/vtp/'
+    def _is_dynamic(v, expected_width=None):
+        """True if v looks like [[t, ...], ...]. Optionally enforce row length."""
+        if not isinstance(v, list) or not v:
+            return False
+        first = v[0]
+        if not isinstance(first, (list, tuple)):
+            return False
+        return expected_width is None or len(first) == expected_width
+
+    def _sorted_unique_rows(rows):
+        """Sort rows by time and drop duplicate times (keep last)."""
+        by_t = {}
+        for r in rows:
+            t = float(r[0])
+            by_t[t] = r  # last one wins
+        return [by_t[t] for t in sorted(by_t.keys())]
+    
+    def _norm_keytime(snap_t, start_idx, stop_idx):
+        """Map snapshot index to [0,1] normalized KeyTime for tracks."""
+        s0 = float(start_idx); s1 = float(stop_idx)
+        if s1 <= s0:
+            return 0.0
+        return (float(snap_t) - s0) / (s1 - s0)
+    
+    def make_animation_track(proxy, prop_name, key_rows, start_idx, stop_idx, interp_mode=None):
+        """
+        Create an animation track for a property on a proxy.
+        key_rows: [[snap, val(s)], ...] where val(s) can be scalar or vector.
+        """
+        track = pvs.GetAnimationTrack(prop_name, proxy=proxy)
+        keyframes = []
+        for row in _sorted_unique_rows(key_rows):
+            kf = pvs.CompositeKeyFrame()
+            kf.KeyTime = _norm_keytime(row[0], start_idx, stop_idx)
+            vals = row[1:]
+            kf.KeyValues = [float(v) for v in vals]
+            if interp_mode:
+                kf.Interpolation = interp_mode
+            keyframes.append(kf)
+        track.KeyFrames = keyframes
+        return track
+
+
+    ##### MAIN FUNCTION BEGINS ##########
+
+    vtp_dir = os.path.join(scene_dir, 'vtp')
     with open(os.path.join(vtp_dir, "style.json")) as f:
         styles = json.load(f)
 
-    if verbose:
-        print("adjusting camera...")
     
     view = pvs.GetActiveViewOrCreate('RenderView')
     pvs._DisableFirstRenderCameraReset()
-    scene_style = styles.get(gn.SCENE_KEY, {})
-    if gn.BACKGROUND_COLOR in scene_style:
-        view.BackgroundColorMode = 'Single Color'
-        view.UseColorPaletteForBackground = 0
-        bg = scene_style[gn.BACKGROUND_COLOR]
-        if max(bg) > 1.0:
-            bg = [c / 255.0 for c in bg]
-        view.Background = bg
-    if gn.CAM_POS in scene_style:
-        view.CameraPosition = scene_style[gn.CAM_POS]
-    if gn.CAM_FOC in scene_style:
-        view.CameraFocalPoint = scene_style[gn.CAM_FOC]
-    if gn.CAM_UP in scene_style:
-        view.CameraViewUp = scene_style[gn.CAM_UP]
-    if gn.CAM_ZOOM in scene_style:
-        view.CameraParallelScale = scene_style[gn.CAM_ZOOM]
-    if gn.CAM_PROJ in scene_style:
-        view.CameraParallelProjection = int(bool(scene_style[gn.CAM_PROJ]))
-    if gn.VIEW_SIZE in scene_style:
-        size = list(scene_style[gn.VIEW_SIZE])
-        smax = max(size[0], size[1])
-        size[0] /= smax; size[1] /= smax
-        # make sure the width and height are even numbers for ffmpeg
-        width = round(size[0] * 1024)
-        height = round(size[1] * 1024)
-        width = width if (width % 2 == 0) else width + 1
-        height = height if (height % 2 == 0) else height + 1
-        view.ViewSize = [width, height]
-    view.OrientationAxesVisibility = 0
-
 
     if verbose:
-        print('loading pvds...')
+        print("loading graphics...")
 
     # load all pvd files in vtp_dir (use glob to find them)
     pvd_paths = sorted(glob.glob(os.path.join(vtp_dir, "*.pvd")))
@@ -96,10 +111,7 @@ def main(scene_dir, verbose = 1):
     if not pvd_paths:
         raise FileNotFoundError(f"No PVD files found in {vtp_dir}")
     
-    if verbose:
-        print("creating graphics...")
-    
-    readers = []
+    sources = {}
     for ppath in pvd_paths:
         # load pvd file
         tree = ET.parse(ppath)
@@ -116,43 +128,151 @@ def main(scene_dir, verbose = 1):
         
         if not grp:
             raise ValueError(f"no group found for {ppath}, cannot locate styles")
-        # create rep
+        # create proxy
         reader = pvs.PVDReader(FileName = ppath)
         pvs.RenameSource(grp, reader)
-        disp = pvs.Show(reader, view)
         pvs.UpdatePipeline(proxy = reader)
+        sources[grp] = reader
 
-        _applyStyles(disp, styles[grp])
-
-        readers.append(reader)
-
-    # # Decide timesteps to render
-    # tsteps = sorted(all_times)
-    
-    # start = styles[gn.SCENE_KEY][gn.START]
-    # stop  = styles[gn.SCENE_KEY][gn.STOP]
-
-    # tsteps = np.arange(start, stop)
-
-    anim_scene = pvs.GetAnimationScene()
-    anim_scene.UpdateAnimationUsingDataTimeSteps()
-    tk = pvs.GetTimeKeeper()
-    tsteps = list(getattr(tk, "TimestepValues", []))
 
     if verbose:
-        print(f"Rendering {len(tsteps)} frames...")
+        print("creating representations...")
+    
+    do_data_interp = False # for now, never interpolate the data since it's not currently set up for it.
+    # do_interp = gn.INTERP_TYPE in scene_style
+
+    reps = {}
+    for name, src in sources.items():
+        # TODO: wrap src in TimeInterplator. Requires change to graphic class to make consistent topology
+        if do_data_interp:
+            rep_src = pvs.TemporalInterpolator(Input = src)
+        else:
+            rep_src = src
+        rep = pvs.Show(rep_src, view)
+        
+        # _applyStyles will handle both static and dynamic styles in the future
+        _applyStyles(rep, styles[name])
+        reps[name] = rep
+
+
+    if verbose:
+        print("adjusting camera and scene...")
+
+    scene_style = styles.get(gn.SCENE_KEY, {})
+    start_idx = int(scene_style[gn.START])
+    stop_idx = int(scene_style[gn.STOP])
+
+    do_cam_tracks  = True   # allow dynamic camera now
+
+    # camera interpolation type (validate only if present)
+    interp_type = scene_style.get(gn.INTERP_TYPE)
+    VALID_INTERP = {"Linear", "Spline", "Boolean"}
+    if interp_type is not None and interp_type not in VALID_INTERP:
+        raise ValueError(f"Invalid interpolation '{interp_type}'. Allowed: {sorted(VALID_INTERP)}")
+
+    # oversampling factor (used only when do_data_interp is True)
+    interp_num = int(scene_style.get(gn.INTERP_STEP, 4))
+    # always static settings
+    if gn.BACKGROUND_COLOR in scene_style:
+        view.UseColorPaletteForBackground = 0
+        bg = list(scene_style[gn.BACKGROUND_COLOR])
+        if max(bg) > 1.0:  # allow 0-255 input
+            bg = [c / 255.0 for c in bg]
+        view.Background = bg
+    
+    if gn.CAM_PROJ in scene_style:
+        view.CameraParallelProjection = int(bool(scene_style[gn.CAM_PROJ]))
+
+    if gn.VIEW_SIZE in scene_style:
+        size = list(scene_style[gn.VIEW_SIZE])
+        smax = max(size[0], size[1])
+        size[0] /= smax; size[1] /= smax
+        # make sure the width and height are even numbers for ffmpeg
+        width = round(size[0] * 1024)
+        height = round(size[1] * 1024)
+        width = width if (width % 2 == 0) else width + 1
+        height = height if (height % 2 == 0) else height + 1
+        view.ViewSize = [width, height]
+
+    view.OrientationAxesVisibility = 0
+
+    # potentially dynamic settings
+    pos_spec = scene_style.get(gn.CAM_POS)    # either [x,y,z] or [[snap,x,y,z],...]
+    foc_spec = scene_style.get(gn.CAM_FOC)
+    up_spec  = scene_style.get(gn.CAM_UP)
+    z_spec   = scene_style.get(gn.CAM_ZOOM)   # scalar or [[snap,scale],...]
+    ang_spec = scene_style.get(gn.CAM_ANGLE)  # scalar or [[snap,deg],...]
+    interp_type = scene_style.get(gn.INTERP_TYPE)
+    # Dynamic → per-property tracks; static → set once on the view.
+    if _is_dynamic(pos_spec, 4) and do_cam_tracks:
+        make_animation_track(view, "CameraPosition",     pos_spec, start_idx, stop_idx, interp_type)
+    elif isinstance(pos_spec, (list, tuple)) and len(pos_spec) == 3:
+        view.CameraPosition = [float(pos_spec[0]), float(pos_spec[1]), float(pos_spec[2])]
+
+    if _is_dynamic(foc_spec, 4) and do_cam_tracks:
+        make_animation_track(view, "CameraFocalPoint",   foc_spec, start_idx, stop_idx, interp_type)
+    elif isinstance(foc_spec, (list, tuple)) and len(foc_spec) == 3:
+        view.CameraFocalPoint = [float(foc_spec[0]), float(foc_spec[1]), float(foc_spec[2])]
+
+    if _is_dynamic(up_spec, 4) and do_cam_tracks:
+        make_animation_track(view, "CameraViewUp",       up_spec,  start_idx, stop_idx, interp_type)
+    elif isinstance(up_spec, (list, tuple)) and len(up_spec) == 3:
+        view.CameraViewUp = [float(up_spec[0]), float(up_spec[1]), float(up_spec[2])]
+
+    if _is_dynamic(z_spec, 2) and do_cam_tracks:
+        make_animation_track(view, "CameraParallelScale", z_spec,  start_idx, stop_idx, interp_type)
+    elif isinstance(z_spec, (int, float)):
+        view.CameraParallelScale = float(z_spec)
+
+    if _is_dynamic(ang_spec, 2) and do_cam_tracks:
+        make_animation_track(view, "CameraViewAngle",     ang_spec, start_idx, stop_idx, interp_type)
+    elif isinstance(ang_spec, (int, float)):
+        view.CameraViewAngle = float(ang_spec)
+
+    anim = pvs.GetAnimationScene()
+    tk   = pvs.GetTimeKeeper()
+
+    # Get dataset time range once
+    if hasattr(tk, "TimeRange"):
+        t0, t1 = float(tk.TimeRange[0]), float(tk.TimeRange[1])
+    else:
+        t0, t1 = 0.0, 1.0
+
+    if do_data_interp:
+        # continuous timeline with oversampling
+        num_snaps  = max(1, int(round(stop_idx - start_idx)))
+        num_frames = max(2, num_snaps * interp_num + 1)
+
+        anim.PlayMode = 'Sequence'
+        anim.StartTime = t0
+        anim.EndTime = t1
+        anim.NumberOfFrames = num_frames
+
+        frame_times = [t0 + (t1 - t0) * (i / (num_frames - 1)) for i in range(num_frames)]
+    else:
+        # discrete data steps
+        anim.UpdateAnimationUsingDataTimeSteps()
+        times = list(getattr(tk, "TimestepValues", []))
+        if not times:
+            times = [t0]  # fallback if empty
+        frame_times = times
+        num_frames = len(frame_times)
+
+    if verbose:
+        print(f"rendering {num_frames} frames...")
+
+
 
     # Prepare frames dir
     frames_dir = os.path.join(scene_dir, 'frames')
     os.makedirs(frames_dir, exist_ok=True)
-    
-    for i, t in enumerate(tsteps):
+    for i, t in enumerate(frame_times):
         tk.Time = float(t)
-
-        pvs.Render(view = view)
-        out_png = os.path.join(frames_dir, f"frame_{i:04d}.png")
-        pvs.SaveScreenshot(out_png, viewOrLayout = view, ImageResolution=view.ViewSize)
-
+        pvs.Render(view=view)
+        pvs.SaveScreenshot(os.path.join(frames_dir, f"frame_{i:04d}.png"),
+                        viewOrLayout=view,
+                        ImageResolution=view.ViewSize)
+        
     if verbose:
         print("saving state to pvsm")
     

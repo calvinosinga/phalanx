@@ -18,7 +18,9 @@ CAM_FOC = 'camera_focus_point'
 CAM_UP = 'camera_view_up'
 CAM_ZOOM = 'camera_parallel_scale'
 CAM_PROJ = 'camera_parallel_projection'
-FRAME_RATE = 'frame_rate'
+CAM_ANGLE = 'camera_angle'
+INTERP_TYPE = 'linear'
+INTERP_STEP = 'stepping'
 VIEW_SIZE = 'view_size'
 SCENE_KEY = '_scene'
 
@@ -40,7 +42,7 @@ STOP = 'stop'
 
 ALLOWED_LINESTYLES = {'solid', 'dashed', 'dotted'}
 ALLOWED_MARKER_SHAPES = {'sphere', 'cube', 'cone', 'arrow', 'cylinder', 'point'}
-
+ALLOWED_INTERP_TYPES = {'Linear', 'Spline', 'Boolean'}
 
 
 INT_GRAPHIC_NAMES = {SCENE_KEY}
