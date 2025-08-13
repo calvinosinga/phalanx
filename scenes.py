@@ -375,6 +375,11 @@ class Scene:
                 gph.setDisplaySnaps(gph.disp_start, death_snap)
 
         return
+
+    def setUnits(self, utype):
+        for gph in self.graphics:
+            gph.setUnits(utype)
+        return
     # doesn't work...
     # def rmLinePoints(self):
     #     for gph in self.graphics:
