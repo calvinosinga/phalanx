@@ -268,6 +268,7 @@ def main(scene_dir, verbose = 1):
     os.makedirs(frames_dir, exist_ok=True)
     for i, t in enumerate(frame_times):
         tk.Time = float(t)
+        anim.AnimationTime = float(t)
         pvs.Render(view=view)
         pvs.SaveScreenshot(os.path.join(frames_dir, f"frame_{i:04d}.png"),
                         viewOrLayout=view,

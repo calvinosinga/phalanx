@@ -38,7 +38,7 @@ LIGHTING = 'lighting'
 # other graphics constants
 START = 'start'
 STOP = 'stop'
-
+_DEF_UNITS = 'phy'
 
 ALLOWED_LINESTYLES = {'solid', 'dashed', 'dotted'}
 ALLOWED_MARKER_SHAPES = {'sphere', 'cube', 'cone', 'arrow', 'cylinder', 'point'}

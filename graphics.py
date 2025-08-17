@@ -26,7 +26,7 @@ class Graphic:
         self.disp_start = None
         self.disp_stop = None
         self.styles = {}
-        self.units = 'phy'
+        self.units = gn._DEF_UNITS
 
     def setName(self, name: str):
         if name in gn.INT_GRAPHIC_NAMES:

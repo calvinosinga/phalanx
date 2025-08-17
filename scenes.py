@@ -18,7 +18,13 @@ class Scene:
         self.start = 0
         self.stop = len(self.sys.halos[0].pos)  # exclusive
 
-        self.do_phy_pos = True
+        # settings for how to display graphics
+        self.units = gn._DEF_UNITS
+        # leaving all graphics up permanently can cause the scene to look busy, allow for deletion after
+        # halo death
+        self.rm_graphics = False  
+
+        # camera properties and defaults
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
         self.setCameraParallelProjection(True) # almost always don't want perspective projection
@@ -49,11 +55,13 @@ class Scene:
         # turn scene properties into lists
         for k,v in rprops.items():
             if isinstance(v, np.ndarray):
-                rprops[k] = v.tolist()
+                rprops[k] = v.tolist() # arrays are not serializable
         return rprops
 
     def setProp(self, name, value):
         self.render_props[name] = value
+
+    # --- Basic camera controls ---
 
     def setBackgroundColor(self, color):
         """
@@ -226,15 +234,15 @@ class Scene:
             raise ValueError("Camera parallel projection must be a boolean.")
         return
     
-    def setInterpolation(self, interp_type: str, interp_step : int = 2) -> None:
-        """
-        Set interpolation mode used by camera keyframes in ParaView.
-        e.g., "Linear" (default), "Spline", "Step", etc.
-        """
-        if interp_type not in gn.ALLOWED_INTERP_TYPES:
-            raise ValueError(f"{interp_type} not in compatible interpolation types {gn.ALLOWED_INTERP_TYPES}")
-        self.render_props[gn.INTERP_TYPE] = interp_type
-        self.render_props[gn.INTERP_STEP] = str(interp_step)
+    # def setInterpolation(self, interp_type: str, interp_step : int = 2) -> None:
+    #     """
+    #     Set interpolation mode used by camera keyframes in ParaView.
+    #     e.g., "Linear" (default), "Spline", "Step", etc.
+    #     """
+    #     if interp_type not in gn.ALLOWED_INTERP_TYPES:
+    #         raise ValueError(f"{interp_type} not in compatible interpolation types {gn.ALLOWED_INTERP_TYPES}")
+    #     self.render_props[gn.INTERP_TYPE] = interp_type
+    #     self.render_props[gn.INTERP_STEP] = str(interp_step)
 
     def setViewSize(self, size):
         if (isinstance(size, (tuple, list)) and len(size) == 2
@@ -246,10 +254,12 @@ class Scene:
     def getViewBox(self): # we default to using system's view box
         return self.sys._getRange(self.start, self.stop)
 
-    def autoCam(self, padding_frac: float = 0.05) -> None:
+    def autoCam(self, padding_frac: float = 0.05, overwrite = False) -> None:
         """
         Pick a camera whose screen plane is spanned by the two PCA axes of
         greatest variance and that tightly encloses every halo, with padding.
+        If the user has already set a camera property, we do not overwrite
+        their settings.
         """
         # 1) Data-driven axes ---------------------------------------------------
         viewDir, viewUp = self.sys._findOptAxis()        # unit vectors
@@ -279,13 +289,18 @@ class Scene:
         cam_pos      = center + viewDir * distance        # absolute 3-vector
 
         # 4) Commit camera & view size ----------------------------------------
-        self.setCameraFocusPoint(tuple(center))
-        self.setCameraPosition(tuple(cam_pos))
-        self.setCameraViewUp(tuple(viewUp))
-        self.setCameraParallelScale(parallel_scale)
-        self.setViewSize((width, height))
+        if gn.CAM_FOC not in self.render_props or overwrite:
+            self.setCameraFocusPoint(tuple(center))
+        if gn.CAM_POS not in self.render_props or overwrite:
+            self.setCameraPosition(tuple(cam_pos))
+        if gn.CAM_UP not in self.render_props or overwrite:
+            self.setCameraViewUp(tuple(viewUp))
+        if gn.CAM_ZOOM not in self.render_props or overwrite:
+            self.setCameraParallelScale(parallel_scale)
+        if gn.VIEW_SIZE not in self.render_props or overwrite:
+            self.setViewSize((width, height))
 
-    
+
 
     # --- Phase 2 (Graphic creation/manipulation) ---
     
@@ -293,6 +308,12 @@ class Scene:
         return self.graphics
     
     def addGraphic(self, graphic) -> None:
+        graphic.setUnits(self.units)
+        if self.rm_graphics and isinstance(graphic, (Marker, Sphere, Line)):
+            death_snap = graphic.halo._last
+            # only adjust if the graphic stays after death or appears before death
+            if (graphic.disp_stop > death_snap) and (graphic.disp_start < death_snap):
+                graphic.setDisplaySnaps(graphic.disp_start, death_snap)
         self.graphics.append(graphic)
         return
     
@@ -303,41 +324,41 @@ class Scene:
                 m = Marker(h, ev)
                 ds = ev.def_style
                 m.setStyle(ev.def_style)
-                # m.setColor(ds[gn.COLOR])
-                # m.setLabel(ds[gn.LABEL])
-                # m.setShape(ds[gn.SHAPE])
                 if gn.SIZE not in ds:
                     m.setSize(self._getDefaultPointSize())
                 else:
                     m.setSize(ds[gn.SIZE])
                 m.setDisplaySnaps(ev.getSnap(), self.stop)
-                self.graphics.append(m)
+                self.addGraphic(m)
 
         return
 
     
-    def makeTjy(self, halo_id) -> Line:
+    def addTjy(self, halo_id) -> Line:
         halo = self.sys.getHalo(halo_id)
         traj = Line(halo)
         # default: only show tjy when halo exists, but keep path until anim ends
         traj.setDisplaySnaps(halo._first, self.stop) 
         # default: label is ID
         traj.setLabel(str(halo.hid))
+        self.addGraphic(traj)
         return traj
     
-    def makeSphere(self, halo_id) -> Sphere:
+    def addSphere(self, halo_id) -> Sphere:
         halo = self.sys.getHalo(halo_id)
         sphere = Sphere(halo)
         sphere.setLabel(str(halo.hid))
+        self.addGraphic(sphere)
         return sphere
     
 
-    def makeSegment(self, halo_id, start, stop):
+    def addSegment(self, halo_id, start, stop):
         halo = self.sys.getHalo(halo_id)
         seg = Line(halo)
         seg.setTjySnaps(start, stop)
         seg.setDisplaySnaps(start, self.stop)
         seg.setName(f"{seg.getName()}_{start}_{stop}")
+        self.addGraphic(seg)
         return seg
     
     def makeParentArrows(self, halo_id, pid_key = gn.UPID) -> List[Arrow]:
@@ -365,8 +386,10 @@ class Scene:
 
         return 0.005 * large_ax
 
-    # phase 3: methods for adjusting graphics
     def deleteGraphicsAfterDeath(self):
+
+        
+        self.rm_graphics = True
         for gph in self.graphics:
             # by default, arrows are not drawn when halo dies
             # only need to rm lines, markers and spheres
@@ -377,14 +400,17 @@ class Scene:
         return
 
     def setUnits(self, utype):
+        # save setting for future graphics
+        allowed_units = ['phy', 'com']
+        if utype in allowed_units:
+            self.units = utype
+        else:
+            raise ValueError(f"{utype} is not allowed unit type ({allowed_units}).")
+        # set the units of all previously made graphics
         for gph in self.graphics:
             gph.setUnits(utype)
         return
-    # doesn't work...
-    # def rmLinePoints(self):
-    #     for gph in self.graphics:
-    #         if isinstance(gph, Line):
-    #             gph.setShowPoints(False)
+
 
 class HostView(Scene):
     """
@@ -394,14 +420,12 @@ class HostView(Scene):
     def __init__(self, system : System, pov_id : int): # also allow pov to be halo object
         self.pov = system.getHalo(pov_id)
         super().__init__(system)
-        self.sys.setHaloOrigin(self.pov.hid)
         self.setAnimSnap(self.pov._first, self.pov._last)
-
+        self.sys.setHaloOrigin(self.pov.hid)
         return
 
-    
-    def hostBoundary(self):
-        sphere = self.makeSphere(self.pov.hid)
+    def showHostBoundary(self):
+        sphere = self.addSphere(self.pov.hid)
         sphere.setOpacity(0.3)
         self.addGraphic(sphere)
         return
@@ -428,8 +452,7 @@ class HostView(Scene):
         for id_i in self.sys.hids:
             if id_i == self.pov.hid:
                 continue
-            tjy = self.makeTjy(id_i)
-            self.addGraphic(tjy)
+            self.addTjy(id_i)
         return
     
     def showTjyByStatus(self, host_color=None, sub_color=None,
@@ -530,54 +553,100 @@ class HostView(Scene):
                     m.setName(f"marker_{hid}_{seg_cat}_{start_snap}")
                     self.addGraphic(m)
                 else:
-                    segment = self.makeSegment(hid, start_snap, stop_snap)
+                    segment = self.addSegment(hid, start_snap, stop_snap)
 
                     segment.setColor(color)
                     if seg_ghost:
                         segment.setStyle(ghost_style)
-                    self.addGraphic(segment)
         return
-    
-class HostViewZoom(HostView):
+   
+
+
+class TrackHost(Scene):
 
     def __init__(self, system, pov_id):
         super().__init__(system, pov_id)
-        if self.pov.hasField(gn.RADIUS):
-            self.zoom_box_length = 1.05 * np.max(self.pov.radius)
+        self.autoCam(overwrite = True)
+        alv = self.pov.getAlive()
+        pos = self.pov.getPos()
+        snaps = np.arange(len(alv))
+        times = snaps[alv]
+        pos = pos[alv]
+        los_ax = self.render_props[gn.CAM_UP]
+        offset_ax = np.array(los_ax) * self.sys.boxsize/2
+        offset = np.repeat(offset_ax.reshape(1, 3), times.size, axis = 0)
+        if gn._DEF_UNITS == 'com':
+            cam_foc = np.hstack((times.reshape(times.size, 1), pos))
+            cam_pos = cam_foc.copy()
+            cam_pos[:, 1:] += offset
+            self.setCameraPosition(cam_pos)
+            self.setCameraFocusPoint(cam_foc)
         else:
-            print("WARNING: default zoom box length requires host radius, user must set...")
-            self.zoom_box_length = None
-
-    def setViewCube(self, box_length):
-        self.zoom_box_length = box_length
+            pos /= (1 + self.pov.z[:, np.newaxis])
+            cam_foc = np.hstack((times.reshape(times.size, 1), pos))
+            cam_pos = cam_foc.copy()
+            cam_pos[:, 1:] += offset
+            self.setCameraPosition(cam_pos)
+            self.setCameraFocusPoint(cam_foc)
+    
+    
+    def setUnits(self, utype):
+        super().setUnits(utype)
+        # camera positions depend on unit type, so we have to adjust that too
+        if self.method == 'cam':
+            alv = self.pov.getAlive()
+            pos = self.pov.getPos()
+            snaps = np.arange(len(alv))
+            times = snaps[alv]
+            pos = pos[alv]
+            los_ax = self.render_props[gn.CAM_UP]
+            offset_ax = np.array(los_ax) * self.sys.boxsize/2
+            offset = np.repeat(offset_ax.reshape(1, 3), times.size, axis = 0)
+            if utype == 'com':
+                cam_foc = np.hstack((times.reshape(times.size, 1), pos))
+                cam_pos = cam_foc.copy()
+                cam_pos[:, 1:] += offset
+                self.setCameraPosition(cam_pos)
+                self.setCameraFocusPoint(cam_foc)
+            else:
+                pos /= (1 + self.pov.z[:, np.newaxis])
+                cam_foc = np.hstack((times.reshape(times.size, 1), pos))
+                cam_pos = cam_foc.copy()
+                cam_pos[:, 1:] += offset
+                self.setCameraPosition(cam_pos)
+                self.setCameraFocusPoint(cam_foc)
         return
     
-    def setViewMaxRad(self, max_rad_frac):
-        
-        self.zoom_box_length = max_rad_frac * np.max(self.pov.radius)
-    
-    def setViewRadSnap(self, rad_frac, snap):
-        self.zoom_box_length = rad_frac * self.pov.radius[snap]
-    
+    def setCameraViewUp(self, up : np.ndarray) -> None:
+        """
+        static: (3,)
+        dynamic: (N,4) [[t, ux, uy, uz], ...]
+        """
+        key = gn.CAM_UP
 
-    def onlyInBox(self): 
-        # only show graphics that occur within the box. without this on, graphics that
-        # occur along the los will still be shown even without being close by.
+        if isinstance(up, np.ndarray):
+            if up.ndim == 1 and up.shape == (3,):
+                arr = up.astype(float, copy=False)
+            elif up.ndim == 2 and up.shape[1] == 4:
+                arr = up.astype(float, copy=False)
+            else:
+                raise ValueError("Camera view-up ndarray must be shape (3,) or (N,4).")
+        elif isinstance(up, (list, tuple)):
+            if len(up) == 3 and all(isinstance(v, (int, float)) for v in up):
+                arr = np.asarray(up, dtype=float)
+            elif len(up) > 0 and isinstance(up[0], (list, tuple)):
+                if not all(len(e) == 4 and all(isinstance(v, (int, float)) for v in e) for e in up):
+                    raise ValueError("Dynamic camera view-up must be [[t, ux, uy, uz], ...].")
+                arr = np.asarray(up, dtype=float)
+            else:
+                raise ValueError("Camera view-up must be (3,) or [[t, ux, uy, uz], ...].")
+        else:
+            raise TypeError("Unsupported type for camera view-up.")
+        self.render_props[key] = arr
 
-        # if we are not zoomed in, then by default all graphics are included
+        # TODO: changing the cameraViewUp requires additional logic when in method 'cam', since
+        # the offsets we give to the camera position need to be along the line-of-sight.
 
-        
-        for gph in self.graphics:
-            mins, maxs = self.getViewBox()
-            gph._showOnlyInView(mins, maxs)
-        return
-                
-    def getViewBox(self):
-        if self.zoom_box_length is None:
-            raise ValueError("zoom box length not set")
-        mins = np.array([-self.zoom_box_length]*3)
-        maxs = np.array([self.zoom_box_length]*3)
-        return mins, maxs
     
 class TjyComp(HostView):
     """
@@ -698,6 +767,7 @@ class MultiView(Scene):
     """
     def __init__(self, system: System):
         super().__init__(system)
+        self.setUnits('com') # assume this will be in comoving units
         self.sys.setCoMOrigin()
         
 
@@ -711,6 +781,7 @@ class SubhaloView(MultiView):
         
     def e():
         return
+
 class HostSub(Scene):
 
     def __init__(self, system: System, alt_upid, alt_pid):
@@ -900,7 +971,7 @@ class HostSub(Scene):
                     m.setName(f"marker_{h.hid}_{seg_snap}")
                     self.addGraphic(m)
                 else:
-                    segment = self.makeSegment(h.hid, seg_start_snap, seg_stop_snap)
+                    segment = self.addSegment(h.hid, seg_start_snap, seg_stop_snap)
                     segment.setStyle(style)
                     self.addGraphic(segment)
         return
