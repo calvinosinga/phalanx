@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.linalg import eigh, norm
 import global_names as gn
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import warnings
 class Event:
     """
@@ -140,6 +140,14 @@ class Halo:
             raise ValueError(f"{name} not defined.")
         return self.fields.get(name, None)
 
+    def getFieldNameMatch(self, key):
+        names = self.fields.keys()
+        matches = []
+        for n in names:
+            if key in n:
+                matches.append(n)
+        return matches
+    
     def getAlive(self):
         return self.alive
 
@@ -197,6 +205,7 @@ class Halo:
     def pid(self):
         return self.getField(gn.PID)
     
+    @property
     def upid(self):
         return self.getField(gn.UPID)
     
@@ -227,8 +236,24 @@ class System:
         return self.halos[idx]
     
     def getID(self, idx) -> int:
-        return self.halos[idx].hid
+        return self.hids[idx]
     
+    def addHalos(self, halos : Union[Halo, List[Halo]]):
+        if isinstance(halos, Halo):
+            halos = [halos]
+        newids = np.array([h.hid for h in halos], dtype = int)
+
+        self.halos.extend(halos)
+        self.hids = np.hstack((self.hids, newids))
+        if len(self.halos) != len(self.hids):
+            raise Exception(f"length of halo {len(self.halos)} and hids {len(self.hids)} do not match")
+        
+        for h in range(len(self.halos)):
+            if not self.halos[h].hid == self.hids[h]:
+                raise Exception(f"id mismatch at idx {h}")
+
+        self._rmPBC()
+        
     
     # ---------- INTERNAL CONVENIENCE METHODS FOR SCENE CLASS  ----------
 
@@ -401,17 +426,11 @@ class System:
         using only alive halos for each snapshot. No periodic wrapping expected.
         """
         nsnaps = self.halos[0].pos.shape[0]
-        all_pos  = np.array([h.pos  for h in self.halos])   # (H, T, 3)
-        all_mass = np.array([h.mass for h in self.halos])   # (H, T)
         all_alive = np.array([h.getAlive() for h in self.halos])  # (H, T)
 
         for s in range(nsnaps):
-            alive_mask = all_alive[:, s]
-            if not np.any(alive_mask):
-                continue
-            pos_s  = all_pos[alive_mask, s, :]            # (N, 3)
-            mass_s = all_mass[alive_mask, s][:, None]     # (N, 1)
-            com = (mass_s * pos_s).sum(axis=0) / mass_s.sum()
+            com = self.getCoM(s)
+
             # subtract COM from every alive halo at s
             k = 0
             for h in self.halos:
@@ -419,6 +438,19 @@ class System:
                     h.pos[s] = h.pos[s] - com
                 k += 1
 
+    def getCoM(self, s):
+        all_pos  = np.array([h.pos  for h in self.halos])   # (H, T, 3)
+        all_mass = np.array([h.mass for h in self.halos])   # (H, T)
+        all_alive = np.array([h.getAlive() for h in self.halos])  # (H, T)
+        alive_mask = all_alive[:, s]
+        if not np.any(alive_mask):
+            return np.array([np.nan]*3)
+        pos_s  = all_pos[alive_mask, s, :]            # (N, 3)
+        mass_s = all_mass[alive_mask, s][:, None]     # (N, 1)
+        com = (mass_s * pos_s).sum(axis=0) / mass_s.sum()
+
+        return com
+    
     def setCustomOrigin(self, orig_pos):
         """
         Shift all positions so orig_pos is at the origin.

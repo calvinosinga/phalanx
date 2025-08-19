@@ -94,11 +94,11 @@ class Graphic:
     def setShape(self, shape: str):
         raise NotImplementedError(f"shape not compatible for graphic {self.__class__}")
     
-    def setLinestyle(self, linestyle: str):
+    def setLineStyle(self, linestyle: str):
         raise NotImplementedError(f"linestyle not compatible for graphic {self.__class__}")
 
 
-    def setLinewidth(self, linewidth: float):
+    def setLineWidth(self, linewidth: float):
         raise NotImplementedError(f"linewidth not compatible for graphic {self.__class__}")
 
 
@@ -300,7 +300,7 @@ class Line(Graphic):
         # if the snapshot is before tjy_start, theres nothing to show.
         return super()._doDisplay(snap) and (snap >= self.tjy_start)
     
-    def setLinestyle(self, linestyle: str):
+    def setLineStyle(self, linestyle: str):
         """Allowed: solid, dashed, dotted."""
         if not isinstance(linestyle, str):
             raise TypeError("Linestyle must be a string.")
@@ -308,7 +308,7 @@ class Line(Graphic):
             raise ValueError(f"Linestyle '{linestyle}' not recognized. Allowed: {gn.ALLOWED_LINESTYLES}")
         self.styles[gn.LSTYLE] = linestyle
 
-    def setLinewidth(self, linewidth: float):
+    def setLineWidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
         self.styles[gn.LWIDTH] = float(linewidth)
 
@@ -371,7 +371,7 @@ class Arrow(Graphic):
         
         return self.mask[snap]
     
-    def setLinewidth(self, linewidth: float):
+    def setLineWidth(self, linewidth: float):
         _check_positive_float(linewidth, "Linewidth")
         self.styles[gn.LWIDTH] = float(linewidth)
 
@@ -409,27 +409,28 @@ class Arrow(Graphic):
             posB /= (1 + self.halo_to.z[:, np.newaxis])
         fnames, tsteps = [], []
         # Determine tip and shaft sizes from styles or defaults
-        tip_frac = self.styles.get(gn.TIPSIZE, 0.25)  # fraction of length for arrow tip
+        tip_frac = self.styles.get(gn.TIPSIZE, 0.05)  # fraction of length for arrow tip
         base_tip_radius = 0.1; base_shaft_radius = 0.05  # PyVista defaults
         if gn.LWIDTH in self.styles:
             lw = self.styles[gn.LWIDTH]
             base_tip_radius *= lw
             base_shaft_radius *= lw
         for isnap in range(start, stop):
-            if not self._doDisplay(out_dir, isnap): # throws error if disp snaps not defined
-                fname = self._writeEmptyVTP(isnap)
+            if not self._doDisplay(isnap): # throws error if disp snaps not defined
+                fname = self._writeEmptyVTP(out_dir, isnap)
                 fnames.append(fname)
                 tsteps.append(isnap)
                 continue
             start_pt = posA[isnap]; end_pt = posB[isnap]
             direction = end_pt - start_pt
+            dist = np.linalg.norm(direction)
             if np.linalg.norm(direction) == 0:
-                fname = self._writeEmptyVTP(isnap)
+                fname = self._writeEmptyVTP(out_dir, isnap)
                 fnames.append(fname)
                 tsteps.append(isnap)
             # Create arrow mesh from start_pt to end_pt
             arrow_mesh = pv.Arrow(start=start_pt, direction=direction, 
-                                tip_length=tip_frac, 
+                                tip_length=tip_frac, scale = dist,
                                 tip_radius=base_tip_radius, shaft_radius=base_shaft_radius)
             fname = os.path.join(out_dir, self.getVTPName(isnap))
             arrow_mesh.save(fname)

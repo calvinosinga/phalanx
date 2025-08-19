@@ -361,18 +361,21 @@ class Scene:
         self.addGraphic(seg)
         return seg
     
-    def makeParentArrows(self, halo_id, pid_key = gn.UPID) -> List[Arrow]:
+    def addParentArrows(self, halo_id, pid_key = gn.UPID) -> List[Arrow]:
         halo = self.sys.getHalo(halo_id)
         pids = halo.getField(pid_key)
-        alv = halo.getAlive()
-        unq_pids = np.unique(pids[alv])
+        has_parent = pids > 0
+        unq_pids = np.unique(pids[has_parent])
         arr_list = []
         for up in unq_pids:
             phalo = self.sys.getHalo(up)
             arrow = Arrow(halo, phalo)
             arrow.setDisplayMask(pids == up)
+            default_name = arrow.getName()
+            arrow.setName(default_name + '_' + pid_key)
             arr_list.append(arrow)
-   
+            self.addGraphic(arrow)
+
         return arr_list
     
     def createDeathEvents(self):
@@ -768,20 +771,151 @@ class MultiView(Scene):
     def __init__(self, system: System):
         super().__init__(system)
         self.setUnits('com') # assume this will be in comoving units
-        self.sys.setCoMOrigin()
-        
+        # set origin to be around last CoM (remember _last is exclusive)
+        last_snap = 0
+        for h in self.sys.halos:
+            if h._last - 1 > last_snap:
+                last_snap = h._last - 1
+            
+        com = self.sys.getCoM(last_snap)
+        self.sys.setCustomOrigin(com)
 
+        
+    def showBoundariesOfHosts(self, sub_id : int):
+        # show boundaries only of the current/past/future hosts of this subhalo
+        # throws error if there are no hosts of that halo
+        return
+    
+    def showTjys(self):
+        for h in self.sys.halos:
+            self.addTjy(h.hid)
+        return
+    
+    
 class SubhaloView(MultiView):
     """
-    Scene intended to understand relationships of a single subhalo and other halos in its hierarchy
+    For following relationships/interactions of a single subhalo
     """
-
-    def __init__(self, system : System, subhalo : int):
+    def __init__(self, system: System, pov_id:int):
         super().__init__(system)
+        self.pov = self.sys.getHalo(pov_id)
+        self.astyles = []
+        return
+    
+    def setArrowTypeStyle(self, pid_keys, astyle = {}, **kwargs):
+        if isinstance(pid_keys, str):
+            pid_keys = [pid_keys]
         
-    def e():
+        style = copy.deepcopy(astyle)
+        style.update(kwargs)
+        self.astyles.append((pid_keys, style))
+        return
+    
+    def addParentArrows(self, pid_key):
+        style = {}
+        for ar in self.astyles:
+            if pid_key in ar[0]:
+                style.update(ar[1])
+        # TODO catch any repeats/conflicts in style (if they appear more than once in astyles)
+        arrows = super().addParentArrows(self.pov.hid, pid_key)
+        for arr in arrows:
+            arr.setStyle(style)
+
+        # --- Methods for applying styles to Traj ---
+
+    def showParentDif(self,
+                fid_key,
+                alt_key,
+                agree_col = (1, 1, 1),
+                agree_lab = 'Agree',
+                host_to_sub_col = (0, 0, 1),
+                host_to_sub_lab = 'Host -> Subhalo',
+                sub_to_host_col = (1, 0, 0),
+                sub_to_host_lab = 'Subhalo -> Host',
+                dif_parent_col = (0, 1, 0),
+                dif_parent_lab = 'Parent Dif'
+            ):
+
+        
+        for h in self.sys.halos:
+            anim_slc = slice(self.start, self.stop)
+            alv = h.getAlive()[anim_slc]
+            fid_pids = h.getField(fid_key)[anim_slc]
+            alt_pids = h.getField(alt_key)[anim_slc]
+            
+            snaps = np.arange(self.start, self.stop)
+            relevant_snaps = snaps[alv]
+            if relevant_snaps.size == 0:
+                continue
+            
+            # create masks for each category
+            N = len(relevant_snaps)
+            fid_sub = fid_pids > 0
+            alt_sub = alt_pids > 0
+            same = fid_pids == alt_pids
+            hts_mask = (~fid_sub & alt_sub)
+            sth_mask = (fid_sub & ~alt_sub)
+            dp_mask = (fid_sub & alt_sub & ~same)
+            categories = np.zeros(N)
+            categories[hts_mask] = 1
+            categories[sth_mask] = 2
+            categories[dp_mask] = 3
+
+            # prepare segment info
+            seg_starts = [0]
+            seg_cats = [categories[0]]
+            for i in range(1, N):
+                if categories[i] != categories[i-1]:
+                    seg_starts.append(i)
+                    seg_cats.append(categories[i])
+            seg_starts.append(N)
+            
+            # create segments
+            colors = [agree_col, host_to_sub_col, sub_to_host_col, dif_parent_col]
+            labels = [agree_lab, host_to_sub_lab, sub_to_host_lab, dif_parent_lab]
+            for i in range(len(seg_starts) - 1):
+                start_idx = seg_starts[i]
+                stop_idx = seg_starts[i+1]
+                seg_len = stop_idx - start_idx
+                seg_snap = relevant_snaps[start_idx]
+                seg_cat = seg_cats[i]
+
+                style = {}
+                style[gn.COLOR] = colors[seg_cat]
+                style[gn.LABEL] = labels[seg_cat]
+
+                # figure out where to start the line:
+                if i == 0:
+                    # first iter: start at its own first point
+                    seg_start_snap = relevant_snaps[start_idx]
+                else:
+                    # back up one so we include the previous point
+                    seg_start_snap = relevant_snaps[start_idx - 1]
+                
+                # always end at the last point of this run (+1 so makeSegment includes it)
+                seg_stop_snap = relevant_snaps[stop_idx - 1] + 1
+
+                # if it's the first segment *and* genuinely only one point, do a Marker
+                if seg_len == 1 and i == 0:
+
+                    # Add a Marker instead of a Line
+                    m = Marker(h, snap=seg_snap)
+                    m.setColor(style[gn.COLOR])
+                    m.setSize(self._getDefaultPointSize())
+                    m.setShape('sphere')
+                    m.setName(f"marker_{h.hid}_{seg_snap}")
+                    self.addGraphic(m)
+                else:
+                    segment = self.addSegment(h.hid, seg_start_snap, seg_stop_snap)
+                    segment.setStyle(style)
+                    self.addGraphic(segment)
         return
 
+
+class MultiSubView(Scene):
+    # for viewing all relationships within a system
+    def __init__(self, system):
+        super().__init__(system)
 class HostSub(Scene):
 
     def __init__(self, system: System, alt_upid, alt_pid):
@@ -860,8 +994,8 @@ class HostSub(Scene):
         alt_style.update(pid_style)
         fid_style.update(pid_style)
         for h in self.sys.hids:
-            fid_arrows = self.makeParentArrows(h, fid_key)
-            alt_arrows = self.makeParentArrows(h, alt_key)
+            fid_arrows = self.addParentArrows(h, fid_key)
+            alt_arrows = self.addParentArrows(h, alt_key)
             
             for fa in fid_arrows:
                 fa.setStyle(fid_style)
@@ -872,108 +1006,6 @@ class HostSub(Scene):
         return
     
     
-    # --- Methods for applying styles to Traj ---
 
-    def showParentDif(self,
-                parent_type = 'pid',
-                agree_col = (1, 1, 1),
-                agree_lab = 'Agree',
-                host_to_sub_col = (0, 0, 1),
-                host_to_sub_lab = 'Host -> Subhalo',
-                sub_to_host_col = (1, 0, 0),
-                sub_to_host_lab = 'Subhalo -> Host',
-                dif_parent_col = (0, 1, 0),
-                dif_parent_lab = 'Parent Dif'
-            ):
-        
-        if self.showing_status:
-            raise Exception("already showing dif, cannot show another")
-        
-        self.showing_status = True
-
-        if parent_type == 'pid':
-            fid_key = self.fid_pid
-            alt_key = self.alt_pid
-        elif parent_type == 'upid':
-            fid_key = self.fid_upid
-            alt_key = self.alt_upid
-        elif parent_type == 'both':
-            raise ValueError(f"parent type {parent_type} not compatible with showParentDif")
-        else:
-            raise ValueError(f"undefined parent type {parent_type}")
-        
-        for h in self.sys.halos:
-            anim_slc = slice(self.start, self.stop)
-            alv = h.getAlive()[anim_slc]
-            fid_pids = h.getField(fid_key)[anim_slc]
-            alt_pids = h.getField(alt_key)[anim_slc]
-            
-            snaps = np.arange(self.start, self.stop)
-            relevant_snaps = snaps[alv]
-            if relevant_snaps.size == 0:
-                continue
-            
-            # create masks for each category
-            N = len(relevant_snaps)
-            fid_sub = fid_pids > 0
-            alt_sub = alt_pids > 0
-            same = fid_pids == alt_pids
-            hts_mask = (~fid_sub & alt_sub)
-            sth_mask = (fid_sub & ~alt_sub)
-            dp_mask = (fid_sub & alt_sub & ~same)
-            categories = np.zeros(N)
-            categories[hts_mask] = 1
-            categories[sth_mask] = 2
-            categories[dp_mask] = 3
-
-            # prepare segment info
-            seg_starts = [0]
-            seg_cats = [categories[0]]
-            for i in range(1, N):
-                if categories[i] != categories[i-1]:
-                    seg_starts.append(i)
-                    seg_cats.append(categories[i])
-            seg_starts.append(N)
-            
-            # create segments
-            colors = [agree_col, host_to_sub_col, sub_to_host_col, dif_parent_col]
-            labels = [agree_lab, host_to_sub_lab, sub_to_host_lab, dif_parent_lab]
-            for i in range(len(seg_starts) - 1):
-                start_idx = seg_starts[i]
-                stop_idx = seg_starts[i+1]
-                seg_len = stop_idx - start_idx
-                seg_snap = relevant_snaps[start_idx]
-                seg_cat = seg_cats[i]
-
-                style = {}
-                style[gn.COLOR] = colors[seg_cat]
-                style[gn.LABEL] = labels[seg_cat]
-
-                # figure out where to start the line:
-                if i == 0:
-                    # first iter: start at its own first point
-                    seg_start_snap = relevant_snaps[start_idx]
-                else:
-                    # back up one so we include the previous point
-                    seg_start_snap = relevant_snaps[start_idx - 1]
-                
-                # always end at the last point of this run (+1 so makeSegment includes it)
-                seg_stop_snap = relevant_snaps[stop_idx - 1] + 1
-
-                # if it's the first segment *and* genuinely only one point, do a Marker
-                if seg_len == 1 and i == 0:
-
-                    # Add a Marker instead of a Line
-                    m = Marker(h, snap=seg_snap)
-                    m.setColor(style[gn.COLOR])
-                    m.setSize(self._getDefaultPointSize())
-                    m.setShape('sphere')
-                    m.setName(f"marker_{h.hid}_{seg_snap}")
-                    self.addGraphic(m)
-                else:
-                    segment = self.addSegment(h.hid, seg_start_snap, seg_stop_snap)
-                    segment.setStyle(style)
-                    self.addGraphic(segment)
-        return
     
 

@@ -1,8 +1,13 @@
 # functions for loading sparta data and quickly creating containers
-from containers import Halo, Peri, Ifl
+from containers import Halo, Peri, Ifl, System
 import global_names as gn
 import numpy as np
-from typing import List
+from typing import List, Iterable
+
+def _toIterable(var):
+    if not isinstance(var, Iterable):
+        return [var]
+    return var
 
 def makeHalo(sminterface, halo_id, default_position = 'x_spa') -> Halo:
     ogid = sminterface.getOrigID(halo_id)
@@ -32,6 +37,7 @@ def _makePeriEvents(out) -> List[Peri]:
     return peris
 
 def addPeri(sminterface, halos, host_id = None):
+    halos = _toIterable(halos)
     for h in halos:
         out = sminterface.getRes(host_id, h.hid, result_type = 'res_oct', return_host_ids = True)
         ntcrs = out.shape[0] # number of instances of this halo as a tracer
@@ -42,6 +48,8 @@ def addPeri(sminterface, halos, host_id = None):
     return
 
 def addIfl(sminterface, halos, host_id = -1):
+    halos = _toIterable(halos)
+
     for h in halos:
         out = sminterface.getRes(host_id, h.hid, result_type = 'res_tjy', return_host_ids = True)
         ntcrs = out.shape[0] # number of instances of this halo as a tracer
@@ -55,6 +63,8 @@ def addApo(sminterface, halos, host_id = -1):
     return
 
 def addTjy(sminterface, halos, host_id):
+    halos = _toIterable(halos)
+
     for h in halos:
         out = sminterface.getRes(host_id, h.hid, result_type = 'res_tjy', return_host_ids = True)
         # should have shape (ntcr = 1, nsnaps)
@@ -64,7 +74,9 @@ def addTjy(sminterface, halos, host_id):
         
     return
 
-def pidToOrig(sminterface, halos : List[Halo], pid_keys = List[str]):
+def addPidFields(sminterface, halos : List[Halo], pid_keys : List[str]):
+    halos = _toIterable(halos)
+
     for h in halos:
         halo_data = sminterface.getCat(h.hid)
         for key in pid_keys:
@@ -74,6 +86,41 @@ def pidToOrig(sminterface, halos : List[Halo], pid_keys = List[str]):
             h.addField(key, pids)
     return
 
+def addHierarchy(sminterface, system : System, pid_key):
+    if 'upid' in pid_key:
+        print(f"found 'upid' key as input into addHierarchy {pid_key}, note that function expects pid")
+    sys_ids = system.hids.copy()
+    print("New Method Call...")
+    print(sys_ids)
+    added_new_halo = False
+    for sid in sys_ids:
+
+        halo_data = sminterface.getCat(sid)
+        pids = halo_data[pid_key]; pid_mask = pids > 0
+        if not np.any(pid_mask): # skip if always a host
+            print(f"{sid} always host")
+            continue
+        # if ever subhalo, gather pids
+        unq_pids = np.unique(sminterface.getOrigID(pids[pid_mask]))
+        print("unique parent IDs...", unq_pids)
+        # mask out parent halos already in system
+        in_mask = np.isin(unq_pids, sys_ids)
+        halos_to_add_ids = unq_pids[~in_mask]
+        halos_to_add = []
+        print("halos to add to system...", halos_to_add_ids)
+        for hta in halos_to_add_ids:
+            halo = makeHalo(sminterface, hta)
+            halos_to_add.append(halo)
+            added_new_halo = True
+        system.addHalos(halos_to_add)
+    
+    if added_new_halo:
+        # repeat until no new halos are added
+        addHierarchy(sminterface, system, pid_key)
+    
+    return
+
+          
 def addCat(
     sminterface,
     halos : List[Halo],
