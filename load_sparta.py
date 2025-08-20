@@ -90,24 +90,19 @@ def addHierarchy(sminterface, system : System, pid_key):
     if 'upid' in pid_key:
         print(f"found 'upid' key as input into addHierarchy {pid_key}, note that function expects pid")
     sys_ids = system.hids.copy()
-    print("New Method Call...")
-    print(sys_ids)
     added_new_halo = False
     for sid in sys_ids:
 
         halo_data = sminterface.getCat(sid)
         pids = halo_data[pid_key]; pid_mask = pids > 0
         if not np.any(pid_mask): # skip if always a host
-            print(f"{sid} always host")
             continue
         # if ever subhalo, gather pids
         unq_pids = np.unique(sminterface.getOrigID(pids[pid_mask]))
-        print("unique parent IDs...", unq_pids)
         # mask out parent halos already in system
         in_mask = np.isin(unq_pids, sys_ids)
         halos_to_add_ids = unq_pids[~in_mask]
         halos_to_add = []
-        print("halos to add to system...", halos_to_add_ids)
         for hta in halos_to_add_ids:
             halo = makeHalo(sminterface, hta)
             halos_to_add.append(halo)

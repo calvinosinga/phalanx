@@ -1,6 +1,6 @@
 from graphics import Graphic, Sphere, Line, Marker, Arrow
-from containers import Halo, System, Event
-from typing import List
+from containers import Halo, Peri, System, Event
+from typing import List, Union
 import numpy as np
 import global_names as gn
 import copy
@@ -46,7 +46,6 @@ class Scene:
         self.stop = stop
         return
     
-
     def getSceneProps(self):
         rprops = copy.deepcopy(self.render_props)
         rprops['start'] = str(self.start)
@@ -254,7 +253,8 @@ class Scene:
     def getViewBox(self): # we default to using system's view box
         return self.sys._getRange(self.start, self.stop)
 
-    def autoCam(self, padding_frac: float = 0.05, overwrite = False) -> None:
+    # --- Complex Camera Controls ---
+    def autoCam(self, padding_frac: float = 0.0, overwrite = False) -> None:
         """
         Pick a camera whose screen plane is spanned by the two PCA axes of
         greatest variance and that tightly encloses every halo, with padding.
@@ -373,6 +373,7 @@ class Scene:
             arrow.setDisplayMask(pids == up)
             default_name = arrow.getName()
             arrow.setName(default_name + '_' + pid_key)
+            arrow.setNorm(self._getDefaultArrowSize())
             arr_list.append(arrow)
             self.addGraphic(arrow)
 
@@ -388,7 +389,15 @@ class Scene:
         large_ax = np.max(spans)
 
         return 0.005 * large_ax
+    
+    def _getDefaultArrowSize(self):
+        mins, maxs = self.getViewBox()
+        spans = maxs - mins            # [dx, dy, dz]
+        # rank axes by span: [smallest, middle, largest]
+        large_ax = np.max(spans)
 
+        return 0.02 * large_ax
+    
     def deleteGraphicsAfterDeath(self):
 
         
@@ -430,7 +439,6 @@ class HostView(Scene):
     def showHostBoundary(self):
         sphere = self.addSphere(self.pov.hid)
         sphere.setOpacity(0.3)
-        self.addGraphic(sphere)
         return
     
     def showOrigin(self, org_size : float = 0.2):
@@ -510,13 +518,13 @@ class HostView(Scene):
 
             # Segment the trajectory by contiguous blocks of the same category and ghost flag
 
-            seg_starts = [halo._first]
+            seg_starts = [max(halo._first, self.start)]
             seg_cats = [(categories[0], ghosts[0])]
             for i in range(1, N):
                 if (categories[i], ghosts[i]) != (categories[i-1], ghosts[i-1]):
-                    seg_starts.append(i + halo._first)
+                    seg_starts.append(i + seg_starts[0])
                     seg_cats.append((categories[i], ghosts[i]))
-            seg_starts.append(halo._last)  # end
+            seg_starts.append(min(halo._last, self.stop))  # end
             for i in range(len(seg_starts)-1):
                 if i == 0:
                     start_snap = seg_starts[i]
@@ -781,9 +789,9 @@ class MultiView(Scene):
         self.sys.setCustomOrigin(com)
 
         
-    def showBoundariesOfHosts(self, sub_id : int):
-        # show boundaries only of the current/past/future hosts of this subhalo
-        # throws error if there are no hosts of that halo
+    def showBoundaries(self, halo_ids : Union[int, List[int]]):
+        # show boundaries of these halos
+
         return
     
     def showTjys(self):
@@ -800,12 +808,12 @@ class SubhaloView(MultiView):
         super().__init__(system)
         self.pov = self.sys.getHalo(pov_id)
         self.astyles = []
+        self.setAnimSnap(self.pov._first, self.pov._last)
         return
     
     def setArrowTypeStyle(self, pid_keys, astyle = {}, **kwargs):
         if isinstance(pid_keys, str):
             pid_keys = [pid_keys]
-        
         style = copy.deepcopy(astyle)
         style.update(kwargs)
         self.astyles.append((pid_keys, style))
@@ -821,8 +829,38 @@ class SubhaloView(MultiView):
         for arr in arrows:
             arr.setStyle(style)
 
-        # --- Methods for applying styles to Traj ---
+    # --- Methods for applying styles to Traj ---
+    def showTjys(self, show_sub = True):
+        for h in self.sys.halos:
+            if not show_sub and h.hid == self.pov.hid:
+                continue
+            self.addTjy(h.hid)
+        return
+    
+    def colorByHalo(self):
+        halo_to_color = {self.pov.hid:(1, 1, 1)}
+        cidx = 0
+        for gph in self.graphics:
+            # color lines by halo
+            if isinstance(gph, Line):
+                if gph.halo.hid in halo_to_color:
+                    gph.setColor(halo_to_color[gph.halo.hid])
+                else:
+                    col = gn.COLOR_CYCLE[cidx]
+                    gph.setColor(col)
+                    halo_to_color[gph.halo.hid] = col
+                    cidx += 1
+            elif isinstance(gph, Marker) and hasattr(gph.event, 'host_id'):
+                if gph.event.host_id in halo_to_color:
+                    gph.setColor(halo_to_color[gph.event.host_id])
+                else:
+                    col = gn.COLOR_CYCLE[cidx]
+                    gph.setColor(col)
+                    halo_to_color[gph.event.host_id] = col
+                    cidx += 1
 
+        return
+    
     def showParentDif(self,
                 fid_key,
                 alt_key,
@@ -836,174 +874,77 @@ class SubhaloView(MultiView):
                 dif_parent_lab = 'Parent Dif'
             ):
 
+        h = self.pov
+        anim_slc = slice(self.start, self.stop)
+        alv = h.getAlive()[anim_slc]
+        fid_pids = h.getField(fid_key)[anim_slc][alv]
+        alt_pids = h.getField(alt_key)[anim_slc][alv]
         
-        for h in self.sys.halos:
-            anim_slc = slice(self.start, self.stop)
-            alv = h.getAlive()[anim_slc]
-            fid_pids = h.getField(fid_key)[anim_slc]
-            alt_pids = h.getField(alt_key)[anim_slc]
-            
-            snaps = np.arange(self.start, self.stop)
-            relevant_snaps = snaps[alv]
-            if relevant_snaps.size == 0:
-                continue
-            
-            # create masks for each category
-            N = len(relevant_snaps)
-            fid_sub = fid_pids > 0
-            alt_sub = alt_pids > 0
-            same = fid_pids == alt_pids
-            hts_mask = (~fid_sub & alt_sub)
-            sth_mask = (fid_sub & ~alt_sub)
-            dp_mask = (fid_sub & alt_sub & ~same)
-            categories = np.zeros(N)
-            categories[hts_mask] = 1
-            categories[sth_mask] = 2
-            categories[dp_mask] = 3
+        snaps = np.arange(self.start, self.stop)
+        relevant_snaps = snaps[alv]
+        if relevant_snaps.size == 0:
+            return
+        
+        # create masks for each category
+        N = len(relevant_snaps)
+        fid_sub = fid_pids > 0
+        alt_sub = alt_pids > 0
+        same = fid_pids == alt_pids
+        hts_mask = (~fid_sub & alt_sub)
+        sth_mask = (fid_sub & ~alt_sub)
+        dp_mask = (fid_sub & alt_sub & ~same)
+        categories = np.zeros(N, dtype = int)
+        categories[hts_mask] = 1
+        categories[sth_mask] = 2
+        categories[dp_mask] = 3
 
-            # prepare segment info
-            seg_starts = [0]
-            seg_cats = [categories[0]]
-            for i in range(1, N):
-                if categories[i] != categories[i-1]:
-                    seg_starts.append(i)
-                    seg_cats.append(categories[i])
-            seg_starts.append(N)
-            
-            # create segments
-            colors = [agree_col, host_to_sub_col, sub_to_host_col, dif_parent_col]
-            labels = [agree_lab, host_to_sub_lab, sub_to_host_lab, dif_parent_lab]
-            for i in range(len(seg_starts) - 1):
-                start_idx = seg_starts[i]
-                stop_idx = seg_starts[i+1]
-                seg_len = stop_idx - start_idx
-                seg_snap = relevant_snaps[start_idx]
-                seg_cat = seg_cats[i]
+        # prepare segment info
+        seg_starts = [max(h._first, self.start)]
+        seg_cats = [categories[0]]
+        for i in range(1, N):
+            if categories[i] != categories[i-1]:
+                seg_starts.append(i + seg_starts[0])
+                seg_cats.append(categories[i])
+        seg_starts.append(min(h._last, self.stop))
+        # create segments
+        colors = [agree_col, host_to_sub_col, sub_to_host_col, dif_parent_col]
+        labels = [agree_lab, host_to_sub_lab, sub_to_host_lab, dif_parent_lab]
+        for i in range(len(seg_starts) - 1):
+            if i == 0:
+                start_snap = seg_starts[i]
+            else:
+                start_snap = seg_starts[i] - 1
+            stop_snap = seg_starts[i+1]
+            seg_len = stop_snap - start_snap
+            seg_cat = seg_cats[i]
 
-                style = {}
-                style[gn.COLOR] = colors[seg_cat]
-                style[gn.LABEL] = labels[seg_cat]
+            style = {}
+            style[gn.COLOR] = colors[seg_cat]
+            style[gn.LABEL] = labels[seg_cat]
 
-                # figure out where to start the line:
-                if i == 0:
-                    # first iter: start at its own first point
-                    seg_start_snap = relevant_snaps[start_idx]
-                else:
-                    # back up one so we include the previous point
-                    seg_start_snap = relevant_snaps[start_idx - 1]
-                
-                # always end at the last point of this run (+1 so makeSegment includes it)
-                seg_stop_snap = relevant_snaps[stop_idx - 1] + 1
 
-                # if it's the first segment *and* genuinely only one point, do a Marker
-                if seg_len == 1 and i == 0:
+            # if it's the first segment *and* genuinely only one point, do a Marker
+            if seg_len == 1 and i == 0:
 
-                    # Add a Marker instead of a Line
-                    m = Marker(h, snap=seg_snap)
-                    m.setColor(style[gn.COLOR])
-                    m.setSize(self._getDefaultPointSize())
-                    m.setShape('sphere')
-                    m.setName(f"marker_{h.hid}_{seg_snap}")
-                    self.addGraphic(m)
-                else:
-                    segment = self.addSegment(h.hid, seg_start_snap, seg_stop_snap)
-                    segment.setStyle(style)
-                    self.addGraphic(segment)
+                # Add a Marker instead of a Line
+                evt = Event(start_snap)
+                m = Marker(h, evt)
+                m.setStyle(style)
+                m.setSize(self._getDefaultPointSize())
+                m.setShape('sphere')
+                m.setName(f"marker_{h.hid}_{start_snap}")
+                self.addGraphic(m)
+            else:
+                segment = self.addSegment(h.hid, start_snap, stop_snap)
+                segment.setStyle(style)
         return
 
 
-class MultiSubView(Scene):
-    # for viewing all relationships within a system
+class HierarchyView(Scene):
+    # for viewing multi-level systems
     def __init__(self, system):
         super().__init__(system)
-class HostSub(Scene):
 
-    def __init__(self, system: System, alt_upid, alt_pid):
-        super().__init__(system)
-        self.alt_upid = alt_upid
-        self.alt_pid = alt_pid
-        self.fid_upid = gn.UPID
-        self.fid_pid = gn.PID
-        # arrow stylings
-        self.fid_style = {
-            gn.COLOR: (0, 0, 1),
-            gn.LABEL: self.fid_pid
-        }
-        self.alt_style = {
-            gn.COLOR: (1, 0, 0),
-            gn.LABEL: self.alt_upid
-        }
-        self.upid_style = {
-            gn.LWIDTH: 2
-        }
-        self.pid_style = {
-            gn.LWIDTH: 1
-        }
-        
-        # we can't display both upid and pid difs, so keep track of which is shown
-        self.showing_status = False
-        return
-    
-    
-    def setFidKey(self, upid_key, pid_key):
-        # check that all halos have these keys
-        change_label = (self.fid_pid == self.fid_style[gn.LABEL])
-        self.sys._checkKey(upid_key)
-        self.sys._checkKey(pid_key)
-        self.fid_pid = pid_key
-        self.fid_upid = upid_key
-        
-        # if the label had default, then change. If user set it, don't change
-        if change_label:
-            self.fid_style[gn.LABEL] = pid_key
-        return
-    
-    def setAltKey(self, upid_key, pid_key):
-        # check that all halos have these keys
-        change_label = (self.alt_pid == self.alt_style[gn.LABEL])
-
-        self.sys._checkKey(upid_key)
-        self.sys._checkKey(pid_key)
-        self.alt_pid = pid_key
-        self.alt_upid = upid_key
-
-        # if the label had default, then change. If user set it, don't change
-        if change_label:
-            self.alt_style[gn.LABEL] = pid_key
-        return
-    
-    # --- Parent Arrow Creation Methods ---
-    def showParentArrows(self, parent_type = 'pid'):
-        if parent_type == 'both':
-            self.showParentArrows('upid')
-            self.showParentArrows('pid')
-            return
-        elif parent_type == 'pid':
-            pid_style = copy.deepcopy(self.pid_style)
-            fid_key = self.fid_pid
-            alt_key = self.alt_pid
-        elif parent_type == 'upid':
-            pid_style = copy.deepcopy(self.upid_style)
-            fid_key = self.fid_upid
-            alt_key = self.alt_upid
-        else:
-            raise ValueError(f"undefined parent type {parent_type}")
-        
-        alt_style = copy.deepcopy(self.alt_style)
-        fid_style = copy.deepcopy(self.fid_style)
-        alt_style.update(pid_style)
-        fid_style.update(pid_style)
-        for h in self.sys.hids:
-            fid_arrows = self.addParentArrows(h, fid_key)
-            alt_arrows = self.addParentArrows(h, alt_key)
-            
-            for fa in fid_arrows:
-                fa.setStyle(fid_style)
-            for aa in alt_arrows:
-                aa.setStyle(alt_style)
-            self.graphics.extend(fid_arrows)
-            self.graphics.extend(alt_arrows)
-        return
     
     
 

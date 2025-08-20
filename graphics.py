@@ -357,8 +357,12 @@ class Arrow(Graphic):
         self.halo_to = halo_to
         self.setName(f'arrow_{halo_from.hid}_{halo_to.hid}' if name is None else name)
         self.mask = None
-        # disp snaps must be defined by user
+        self.norm = None
 
+    def setNorm(self, norm):
+        self.norm = norm
+        return
+    
     def setDisplayMask(self, mask):
         if len(mask) != len(self.halo_from.z):
             raise ValueError("mask is incorrect size")
@@ -424,14 +428,18 @@ class Arrow(Graphic):
             start_pt = posA[isnap]; end_pt = posB[isnap]
             direction = end_pt - start_pt
             dist = np.linalg.norm(direction)
+            if self.norm is None:
+                self.norm = dist
+
             if np.linalg.norm(direction) == 0:
                 fname = self._writeEmptyVTP(out_dir, isnap)
                 fnames.append(fname)
                 tsteps.append(isnap)
             # Create arrow mesh from start_pt to end_pt
             arrow_mesh = pv.Arrow(start=start_pt, direction=direction, 
-                                tip_length=tip_frac, scale = dist,
-                                tip_radius=base_tip_radius, shaft_radius=base_shaft_radius)
+                                tip_length=tip_frac, scale=dist,
+                                tip_radius=base_tip_radius * (self.norm/dist),
+                                shaft_radius=base_shaft_radius * (self.norm/dist))
             fname = os.path.join(out_dir, self.getVTPName(isnap))
             arrow_mesh.save(fname)
             fnames.append(fname); tsteps.append(isnap)
