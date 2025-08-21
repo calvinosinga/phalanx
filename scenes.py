@@ -1,9 +1,14 @@
 from graphics import Graphic, Sphere, Line, Marker, Arrow
 from containers import Halo, Peri, System, Event
-from typing import List, Union
+from typing import List, Union, Optional, Dict, Tuple
 import numpy as np
 import global_names as gn
 import copy
+
+def _toIterable(var):
+    if not isinstance(var, List):
+        return [var]
+    return var
 
 class Scene:
     """
@@ -28,10 +33,13 @@ class Scene:
         self.render_props = {}
         self.setBackgroundColor((0, 0, 0)) # want black background for almost all scenes
         self.setCameraParallelProjection(True) # almost always don't want perspective projection
+
+        # text/legend display properties
+        self.texts = []
         return
 
 
-    # --- Phase 1: Scene Property Methods ---
+    # --- Scene Property Methods ---
     def setAnimSnap(self, start, stop):
         """
         the snapshots the animation will show
@@ -46,19 +54,114 @@ class Scene:
         self.stop = stop
         return
     
-    def getSceneProps(self):
+    # ---------------------------
+    # Serialization to style.json
+    # ---------------------------
+    def getSceneProps(self) -> Dict:
+        """
+        Return dict to be serialized under _scene in style.json,
+        including the scene-wide text specs under key 'text'.
+        """
+        props = {
+            "start": int(self.start),
+            "stop": int(self.stop),
+        }
         rprops = copy.deepcopy(self.render_props)
-        rprops['start'] = str(self.start)
-        rprops['stop'] = str(self.stop)
+        props.update(rprops)
         
         # turn scene properties into lists
-        for k,v in rprops.items():
+        for k,v in props.items():
             if isinstance(v, np.ndarray):
-                rprops[k] = v.tolist() # arrays are not serializable
-        return rprops
+                props[k] = v.tolist() # arrays are not serializable
+        
+        if self.texts:
+            props["text"] = self.texts
+        return props
 
-    def setProp(self, name, value):
-        self.render_props[name] = value
+    # ---------------------------
+    # Overlays / legend API
+    # ---------------------------
+    def showRedshift(self,
+                     fmt: str = 'z = %.2f',
+                     color: tuple = (1.0, 1.0, 1.0),
+                     font: int = 12,
+                     position: List[float] = [0.05, 0.95]) -> None:
+        """
+        Create a dynamic scene-wide annotation for redshift.
+        Produces a string per animation timestep [start:stop].
+        """
+        z = np.asarray(self.sys.getZ())
+        z_slice = z[self.start:self.stop]
+        # Support printf-style or str.format
+        texts = []
+        for val in z_slice:
+            try:
+                s = fmt % val
+            except TypeError:
+                s = fmt.format(val)
+            texts.append(s)
+
+        spec = {
+            "text": texts,
+            "color": list(color),
+            "font": int(font),
+            "position": list(position),
+        }
+        self.texts.append(spec)
+
+    def addText(self,
+                text: Union[str, List[str]],
+                color: tuple = (1.0, 1.0, 1.0),
+                font: int = 12,
+                position: List[float] = [0.05, 0.95]) -> None:
+        """
+        Add an arbitrary scene-wide annotation (static string or list per frame).
+        """
+        if isinstance(text, list):
+            # ensure it matches animation length if dynamic
+            if len(text) != (self.stop - self.start):
+                raise ValueError("Length of dynamic text must equal number of frames (stop-start).")
+        self.texts.append({
+            "text": text,
+            "color": list(color),
+            "font": int(font),
+            "position": list(position),
+        })
+
+    # ---------------------------
+    # Per-graphic labels from halo fields
+    # ---------------------------
+    def addFieldsToLabels(self,
+                          fmt: str,
+                          fields: Union[str, List[str]],
+                          halo_ids: Optional[List[int]] = None) -> None:
+        """
+        Append formatted field values to each matching graphic's label.
+        If any field is time-varying, a per-frame label list is created for that graphic.
+        Positions will be auto-stacked in render step.
+        """
+        if isinstance(fields, str):
+            field_list = [fields]
+        else:
+            field_list = list(fields)
+        if not field_list:
+            raise ValueError("fields must be a non-empty string or list of strings.")
+
+        target_hids = None if halo_ids is None else set(halo_ids)
+
+        for g in self.graphics:
+            halo = getattr(g, "halo", None)
+            if halo is None:
+                # graphics that don’t wrap a halo (e.g., Arrow) will reject via NotImplemented in graphic method
+                continue
+            if (target_hids is not None) and (halo.id not in target_hids):
+                continue
+
+            if hasattr(g, "addFieldToLabel"):
+                g.addFieldToLabel(fmt, field_list, start=self.start, stop=self.stop)
+            else:
+                # If a subclass opts out
+                pass
 
     # --- Basic camera controls ---
 
@@ -339,15 +442,12 @@ class Scene:
         traj = Line(halo)
         # default: only show tjy when halo exists, but keep path until anim ends
         traj.setDisplaySnaps(halo._first, self.stop) 
-        # default: label is ID
-        traj.setLabel(str(halo.hid))
         self.addGraphic(traj)
         return traj
     
     def addSphere(self, halo_id) -> Sphere:
         halo = self.sys.getHalo(halo_id)
         sphere = Sphere(halo)
-        sphere.setLabel(str(halo.hid))
         self.addGraphic(sphere)
         return sphere
     
@@ -452,7 +552,6 @@ class HostView(Scene):
         org.def_style = {
             gn.COLOR: (1, 1, 1), # WHITE
             gn.SHAPE: 'sphere',
-            gn.LABEL: str(self.pov.hid),
             gn.SIZE: self._getDefaultPointSize() * org_size
         }
         self.pov.addEvent(org)
@@ -676,12 +775,9 @@ class TjyComp(HostView):
         self.alt_sys = System(alt_halos, self.sys.boxsize)
         self.alt_sys.setHaloOrigin(pov_id)
         self.fid_style = {
-            gn.COLOR: (1, 0, 0),
-            gn.LABEL: 'catalog'
-        }
+            gn.COLOR: (1, 0, 0)        }
         self.alt_style = {
-            gn.COLOR: (0, 0, 1),
-            gn.LABEL: 'sparta'
+            gn.COLOR: (0, 0, 1)
         }
         return
     
@@ -790,7 +886,10 @@ class MultiView(Scene):
 
         
     def showBoundaries(self, halo_ids : Union[int, List[int]]):
-        # show boundaries of these halos
+        halo_ids = _toIterable(halo_ids)
+        for hi in halo_ids:
+            sphere = self.addSphere(hi)
+            sphere.setOpacity(0.1)
 
         return
     
@@ -837,12 +936,19 @@ class SubhaloView(MultiView):
             self.addTjy(h.hid)
         return
     
+    def labelTjyByID(self):
+        for gph in self.graphics:
+            if isinstance(gph, Line):
+                gph.setLabel(gph.halo.hid)
+        return
+
     def colorByHalo(self):
+        # TODO save color settings, when adding grapchic apply colors. Move to super class
         halo_to_color = {self.pov.hid:(1, 1, 1)}
         cidx = 0
         for gph in self.graphics:
             # color lines by halo
-            if isinstance(gph, Line):
+            if isinstance(gph, Line) or isinstance(gph, Sphere):
                 if gph.halo.hid in halo_to_color:
                     gph.setColor(halo_to_color[gph.halo.hid])
                 else:
@@ -858,7 +964,6 @@ class SubhaloView(MultiView):
                     gph.setColor(col)
                     halo_to_color[gph.event.host_id] = col
                     cidx += 1
-
         return
     
     def showParentDif(self,

@@ -23,7 +23,7 @@ INTERP_TYPE = 'linear'
 INTERP_STEP = 'stepping'
 VIEW_SIZE = 'view_size'
 SCENE_KEY = '_scene'
-
+TEXT = 'text'
 # graphics style constants - all should be implemented in graphic._setStyle
 COLOR = 'color'
 OPACITY = 'opacity'

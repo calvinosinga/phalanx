@@ -83,6 +83,57 @@ class Graphic:
             raise TypeError("Label must be a string.")
         self.styles[gn.LABEL] = label
 
+    def addFieldToLabel(self,
+                        fmt: str,
+                        fields: List[str],
+                        start: int,
+                        stop: int) -> None:
+        """
+        Default implementation for halo-backed graphics.
+        Appends formatted field values to label; emits a list if time-varying.
+        """
+        halo = getattr(self, "halo", None)
+        if halo is None:
+            raise NotImplementedError(f"{self.__class__.__name__} does not provide a halo to read fields from.")
+
+        arrays = []
+        lengths = []
+        for fname in fields:
+            if hasattr(halo, "getField"):
+                arr = halo.getField(fname)
+            else:
+                arr = halo.fields[fname]
+            arr = np.asarray(arr)[start:stop]
+            arrays.append(arr)
+            lengths.append(arr.shape[0])
+
+        nframes = stop - start
+        # If any array has >1 distinct value across frames, treat as dynamic
+        is_dynamic = any(len(np.unique(a)) > 1 for a in arrays)
+
+        base = self.getLabel()
+        if base is None:
+            # default base label
+            hid = getattr(halo, "id", None)
+            base = f"Halo {hid}" if hid is not None else self.name
+
+        def _fmt(vals):
+            # Support both printf-style and str.format
+            try:
+                return fmt % tuple(vals) if len(vals) > 1 else (fmt % vals[0])
+            except TypeError:
+                return fmt.format(*vals)
+
+        if is_dynamic:
+            out = []
+            for i in range(nframes):
+                vals_i = [a[i] if a.ndim == 1 else a[i] for a in arrays]
+                out.append(f"{base}, {_fmt(vals_i)}")
+            self.setLabel(out)
+        else:
+            vals0 = [a[0] if a.ndim == 1 else a[0] for a in arrays]
+            self.setLabel(f"{base}, {_fmt(vals0)}")
+
     def setColor(self, color: Union[tuple, list, np.ndarray]):
         """Set the color for the graphic."""
         _check_color(color)
@@ -179,7 +230,6 @@ class Graphic:
         """
         
         pass
-
 
 class Sphere(Graphic):
 
@@ -405,7 +455,10 @@ class Arrow(Graphic):
             self.disp_start = int(hits[0])
         else:
             self.disp_start = np.inf # never display
-
+    
+    def addFieldToLabel(self, *args, **kwargs):
+        raise NotImplementedError("Arrow does not expose a halo; cannot add field-driven labels.")
+    
     def writeVTP(self, out_dir, start, stop):
         posA = self.halo_from.getPos(); posB = self.halo_to.getPos()
         if self.units == 'phy':

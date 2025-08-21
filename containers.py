@@ -34,7 +34,6 @@ class Peri(Event):
     def _setDefaultStyle(self):
         self.def_style = {
             gn.COLOR : (1, 1, 0), # yellow
-            gn.LABEL : 'pericenter',
             gn.SHAPE : 'sphere'
         }
 
@@ -48,7 +47,6 @@ class Apo(Event):
     def _setDefaultStyle(self):
         self.def_style = {
             gn.COLOR : (50/255, 205/255, 50/255), # lime green
-            gn.LABEL : 'pericenter',
             gn.SHAPE : 'sphere'
         }
 
@@ -62,7 +60,6 @@ class Ifl(Event):
     def _setDefaultStyle(self):
         self.def_style = {
             gn.COLOR : (1, 165/255, 0), # orange
-            gn.LABEL : 'infall',
             gn.SHAPE : 'sphere'
         }
 
@@ -76,7 +73,6 @@ class SwitchStatus(Event):
     def _setDefaultStyle(self):
         self.def_style = {
             gn.COLOR : (54/255, 117/255, 136/255), # teal blue
-            gn.LABEL : 'host switch',
             gn.SHAPE : 'cone'
         }
     
@@ -85,7 +81,6 @@ class Death(Event):
     def _setDefaultStyle(self):
         self.def_style = {
             gn.COLOR : (1, 0, 0), # red
-            gn.LABEL : 'death',
             gn.SHAPE : 'cube'
         }
         return
@@ -254,7 +249,10 @@ class System:
 
         self._rmPBC()
         
-    
+    def getZ(self):
+        if not self.halos:
+            raise ValueError("has no halos, cannot get redshift")
+        return self.halos[0].z.copy()
     # ---------- INTERNAL CONVENIENCE METHODS FOR SCENE CLASS  ----------
 
     def _checkKey(self, key_name):
