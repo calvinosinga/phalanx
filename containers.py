@@ -163,6 +163,9 @@ class Halo:
             mask = snap_mask & alv
         else:
             mask = alv
+        
+        if not np.any(mask):
+            return np.array([np.inf] * 3), np.array([-np.inf] * 3)
         pos = self.getPos()
         mins = pos[mask, :].min(axis = 0)
         maxs = pos[mask, :].max(axis = 0)

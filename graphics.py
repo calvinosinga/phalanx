@@ -79,10 +79,14 @@ class Graphic:
         
     def setLabel(self, label: str):
         """Set the label for the graphic."""
-        if not isinstance(label, str):
-            raise TypeError("Label must be a string.")
         self.styles[gn.LABEL] = label
-
+    
+    def hasLabel(self):
+        return gn.LABEL in self.styles
+    
+    def getLabel(self):
+        return self.styles[gn.LABEL]
+    
     def addFieldToLabel(self,
                         fmt: str,
                         fields: List[str],
@@ -466,8 +470,8 @@ class Arrow(Graphic):
             posB /= (1 + self.halo_to.z[:, np.newaxis])
         fnames, tsteps = [], []
         # Determine tip and shaft sizes from styles or defaults
-        tip_frac = self.styles.get(gn.TIPSIZE, 0.05)  # fraction of length for arrow tip
-        base_tip_radius = 0.1; base_shaft_radius = 0.05  # PyVista defaults
+        tip_frac = self.styles.get(gn.TIPSIZE, 0.1)  # fraction of length for arrow tip
+        base_tip_radius = 0.2; base_shaft_radius = 0.05  # PyVista defaults
         if gn.LWIDTH in self.styles:
             lw = self.styles[gn.LWIDTH]
             base_tip_radius *= lw

@@ -113,7 +113,7 @@ class Scene:
                 text: Union[str, List[str]],
                 color: tuple = (1.0, 1.0, 1.0),
                 font: int = 12,
-                position: List[float] = [0.05, 0.95]) -> None:
+                position: List[float] = [0.90, 0.95]) -> None:
         """
         Add an arbitrary scene-wide annotation (static string or list per frame).
         """
@@ -146,18 +146,15 @@ class Scene:
             field_list = list(fields)
         if not field_list:
             raise ValueError("fields must be a non-empty string or list of strings.")
-
-        target_hids = None if halo_ids is None else set(halo_ids)
-
+        target_hids = self.sys.hids.tolist() if halo_ids is None else set(halo_ids)
         for g in self.graphics:
             halo = getattr(g, "halo", None)
             if halo is None:
                 # graphics that don’t wrap a halo (e.g., Arrow) will reject via NotImplemented in graphic method
                 continue
-            if (target_hids is not None) and (halo.id not in target_hids):
+            if (halo.hid not in target_hids):
                 continue
-
-            if hasattr(g, "addFieldToLabel"):
+            if hasattr(g, "addFieldToLabel") and g.hasLabel():
                 g.addFieldToLabel(fmt, field_list, start=self.start, stop=self.stop)
             else:
                 # If a subclass opts out
@@ -929,18 +926,15 @@ class SubhaloView(MultiView):
             arr.setStyle(style)
 
     # --- Methods for applying styles to Traj ---
-    def showTjys(self, show_sub = True):
+    def showTjys(self, show_sub = True, id_label = False):
         for h in self.sys.halos:
             if not show_sub and h.hid == self.pov.hid:
                 continue
-            self.addTjy(h.hid)
+            tjy = self.addTjy(h.hid)
+            if id_label:
+                tjy.setLabel(f"{h.hid}")
         return
     
-    def labelTjyByID(self):
-        for gph in self.graphics:
-            if isinstance(gph, Line):
-                gph.setLabel(gph.halo.hid)
-        return
 
     def colorByHalo(self):
         # TODO save color settings, when adding grapchic apply colors. Move to super class

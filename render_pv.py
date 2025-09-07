@@ -91,13 +91,13 @@ def main(scene_dir, verbose = 1):
         track.KeyFrames = keyframes
         return track
 
-    def _stack_bottom_right(n, x=0.95, y0=0.05, dy=0.04):
+    def _stack_bottom_right(n, right_pad=0.05, bottom_pad=0.05, dy=0.04):
         """
-        Produce n positions stacked from bottom-right upward (normalized coords).
-        We nudge x left slightly so long labels don't get clipped.
+        Return n positions stacked from bottom-right upward (normalized coords).
+        With right-justified text, we can anchor very close to 1.0.
         """
-        x_adj = max(0.0, x - 0.18)
-        return [[x_adj, y0 + i*dy] for i in range(n)]
+        return [[right_pad, bottom_pad + i*dy] for i in range(n)]
+
 
     def _make_scene_text_actors(view, scene_text_specs):
         """
@@ -107,7 +107,7 @@ def main(scene_dir, verbose = 1):
         for spec in scene_text_specs:
             txt = spec.get("text")
             color = spec.get("color", [1,1,1])
-            font = int(spec.get("font", 12))
+            font = int(spec.get("font", 14))
             pos = spec.get("position", [0.05, 0.95])
 
             t = pvs.Text(Text=(txt if isinstance(txt, str) else ""))  # empty if dynamic
@@ -147,8 +147,7 @@ def main(scene_dir, verbose = 1):
             disp.WindowLocation = "Any Location"
             disp.Position = pos
             disp.Color = color
-            disp.FontSize = 14
-
+            disp.FontSize = 16
             actors.append({
                 "src": t,
                 "series": label if isinstance(label, list) else None
@@ -222,10 +221,10 @@ def main(scene_dir, verbose = 1):
         print("adjusting camera and scene...")
 
     scene_style = styles.get(gn.SCENE_KEY, {})
-    # annotations = scene_style.get(gn.TEXT, [])
+    annotations = scene_style.get(gn.TEXT, [])
 
-    # text_actors = _make_scene_text_actors(view, annotations)
-    # grph_label_actors = _make_graphic_label_actors(view, styles)
+    text_actors = _make_scene_text_actors(view, annotations)
+    grph_label_actors = _make_graphic_label_actors(view, styles)
     start_idx = int(scene_style[gn.START])
     stop_idx = int(scene_style[gn.STOP])
 
@@ -336,17 +335,17 @@ def main(scene_dir, verbose = 1):
     for i, t in enumerate(frame_times):
         tk.Time = float(t)
         anim.AnimationTime = float(t)
-        # # Update scene-wide dynamic texts
-        # for a in text_actors:
-        #     if a["series"] is not None:
-        #         if i < len(a["series"]):
-        #             a["src"].Text = a["series"][i]
+        # Update scene-wide dynamic texts
+        for a in text_actors:
+            if a["series"] is not None:
+                if i < len(a["series"]):
+                    a["src"].Text = a["series"][i]
 
-        # # Update per-graphic dynamic labels
-        # for a in grph_label_actors:
-        #     if a["series"] is not None:
-        #         if i < len(a["series"]):
-        #             a["src"].Text = a["series"][i]
+        # Update per-graphic dynamic labels
+        for a in grph_label_actors:
+            if a["series"] is not None:
+                if i < len(a["series"]):
+                    a["src"].Text = a["series"][i]
         pvs.Render(view=view)
         pvs.SaveScreenshot(os.path.join(frames_dir, f"frame_{i:04d}.png"),
                         viewOrLayout=view,
